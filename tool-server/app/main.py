@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException
 
 from .config import settings
 from .models import MemoryWriteRequest, SpawnRequest
+from .provisioning import provisioning
 from .security import AuthContext, require_auth_context
 from .storage import storage
 
@@ -66,14 +67,19 @@ async def spawn_agent(body: SpawnRequest, auth: AuthContext = Depends(require_au
     if auth.spawn_depth >= settings.spawn_max_depth:
         raise HTTPException(status_code=403, detail="Spawn depth limit exceeded")
 
+    human_session_id = auth.human_session_id or provisioning.system_session_id()
+    creds = await provisioning.issue_spawn_credentials(body.agent_class)
+
     payload = {
         "agent_class": body.agent_class,
         "task_context": body.task_context,
         "memory_keys": body.memory_keys,
         "parent_agent_id": auth.agent_id,
-        "human_session_id": auth.human_session_id,
+        "human_session_id": human_session_id,
         "spawn_depth": auth.spawn_depth + 1,
         "root_orchestrator_id": auth.root_orchestrator_id,
+        "vault_role_id": creds.role_id,
+        "vault_secret_id": creds.secret_id,
     }
     last_error = ""
     for _ in range(3):
@@ -82,6 +88,7 @@ async def spawn_agent(body: SpawnRequest, auth: AuthContext = Depends(require_au
                 resp = await client.post(f"{settings.beeai_url}/spawn", json=payload)
             if resp.status_code == 200:
                 data = resp.json()
+                provisioning.provision_agent_collections(data["agent_id"])
                 await storage.registry_upsert(
                     data["agent_id"],
                     {
@@ -89,10 +96,11 @@ async def spawn_agent(body: SpawnRequest, auth: AuthContext = Depends(require_au
                         "class": body.agent_class,
                         "status": "active",
                         "spawned_by": auth.agent_id,
-                        "human_session_id": auth.human_session_id,
+                        "human_session_id": human_session_id,
                         "parent_agent_id": auth.agent_id,
                         "spawn_depth": str(auth.spawn_depth + 1),
                         "root_orchestrator_id": auth.root_orchestrator_id,
+                        "vault_token_accessor": creds.token_accessor,
                     },
                 )
                 return data
@@ -125,6 +133,10 @@ async def delete_spawn(agent_id: str, auth: AuthContext = Depends(require_auth_c
         resp = await client.post(f"{settings.beeai_url}/terminate", json=payload)
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail="BeeAI terminate failed")
+
+    accessor = record.get("vault_token_accessor")
+    if accessor:
+        await provisioning.revoke_accessor(accessor)
 
     await storage.registry_delete(agent_id)
     return {"agent_id": agent_id, "status": "terminated"}

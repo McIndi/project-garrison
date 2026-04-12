@@ -7,7 +7,7 @@ services:
       - data-net
 
   mongo:
-    image: docker.io/library/mongo:8.0
+    image: docker.io/library/mongo:7
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
       MONGO_INITDB_ROOT_PASSWORD: rootpass
@@ -76,6 +76,7 @@ services:
     environment:
       TOOL_SERVER_BEEAI_URL: http://beeai-runtime:8090
       TOOL_SERVER_VALKEY_URL: redis://valkey:6379/0
+      TOOL_SERVER_MONGO_URI: mongodb://root:rootpass@mongo:27017
       TOOL_SERVER_VAULT_ADDR: http://vault:8200
       TOOL_SERVER_VAULT_TOKEN: root
       TOOL_SERVER_REQUIRE_TOKEN_LOOKUP: "false"

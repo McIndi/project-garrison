@@ -87,3 +87,89 @@ def test_delete_rejects_other_spawn_tree(monkeypatch) -> None:
 
     resp = client.delete("/tools/spawn/agt-abc", headers=BASE_HEADERS)
     assert resp.status_code == 403
+
+
+def test_missing_human_session_gets_system_id(monkeypatch) -> None:
+    headers = dict(BASE_HEADERS)
+    headers.pop("x-human-session-id")
+
+    async def fake_issue_spawn_credentials(_: str):
+        class Creds:
+            role_id = "role-id"
+            secret_id = "secret-id"
+            token_accessor = "acc-123"
+
+        return Creds()
+
+    async def fake_post(url, json):
+        class Resp:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"agent_id": "agt-test", "status": "spawned"}
+
+        return Resp()
+
+    class DummyClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        post = staticmethod(fake_post)
+
+    monkeypatch.setattr("app.main.provisioning.issue_spawn_credentials", fake_issue_spawn_credentials)
+    monkeypatch.setattr("app.main.provisioning.provision_agent_collections", lambda _: None)
+    monkeypatch.setattr("app.main.httpx.AsyncClient", lambda timeout: DummyClient())
+
+    resp = client.post(
+        "/tools/spawn",
+        headers=headers,
+        json={"agent_class": "rag", "task_context": "ctx", "memory_keys": []},
+    )
+    assert resp.status_code == 200
+
+
+def test_delete_revokes_accessor(monkeypatch) -> None:
+    async def fake_registry_get_record(_: str):
+        return {
+            "agent_id": "agt-abc",
+            "root_orchestrator_id": "agent-root",
+            "vault_token_accessor": "acc-xyz",
+        }
+
+    async def fake_post(url, json):
+        class Resp:
+            status_code = 200
+
+            text = "ok"
+
+        return Resp()
+
+    class DummyClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        post = staticmethod(fake_post)
+
+    revoked = {"called": False}
+
+    async def fake_revoke_accessor(accessor: str):
+        revoked["called"] = accessor == "acc-xyz"
+
+    async def fake_registry_delete(_: str):
+        return None
+
+    monkeypatch.setattr("app.main.storage.registry_get_record", fake_registry_get_record)
+    monkeypatch.setattr("app.main.storage.registry_delete", fake_registry_delete)
+    monkeypatch.setattr("app.main.httpx.AsyncClient", lambda timeout: DummyClient())
+    monkeypatch.setattr("app.main.provisioning.revoke_accessor", fake_revoke_accessor)
+
+    resp = client.delete("/tools/spawn/agt-abc", headers=BASE_HEADERS)
+    assert resp.status_code == 200
+    assert revoked["called"] is True

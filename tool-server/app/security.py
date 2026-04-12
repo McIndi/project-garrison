@@ -4,6 +4,7 @@ import httpx
 from fastapi import Header, HTTPException
 
 from .config import settings
+from .provisioning import provisioning
 
 
 @dataclass
@@ -48,8 +49,7 @@ async def require_auth_context(
     if not x_agent_id or not x_agent_class:
         raise HTTPException(status_code=400, detail="Missing x-agent-id or x-agent-class")
 
-    if not x_human_session_id:
-        raise HTTPException(status_code=400, detail="Missing x-human-session-id")
+    human_session_id = x_human_session_id or provisioning.system_session_id()
 
     try:
         spawn_depth = int(x_spawn_depth or "0")
@@ -67,7 +67,7 @@ async def require_auth_context(
         token=token,
         agent_id=x_agent_id,
         agent_class=x_agent_class,
-        human_session_id=x_human_session_id,
+        human_session_id=human_session_id,
         spawn_depth=spawn_depth,
         root_orchestrator_id=root_orchestrator_id,
     )

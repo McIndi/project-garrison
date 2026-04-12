@@ -11,12 +11,16 @@ class SpawnRequest(BaseModel):
     parent_agent_id: str
     human_session_id: str
     spawn_depth: int
+    root_orchestrator_id: str
+    vault_role_id: str
+    vault_secret_id: str
 
 
 class TerminateRequest(BaseModel):
     agent_id: str
     requestor_agent_id: str
     human_session_id: str
+    root_orchestrator_id: str
 
 
 app = FastAPI(title="beeai-runtime-stub")
@@ -38,6 +42,8 @@ async def spawn(body: SpawnRequest) -> dict:
         "parent_agent_id": body.parent_agent_id,
         "human_session_id": body.human_session_id,
         "spawn_depth": body.spawn_depth,
+        "root_orchestrator_id": body.root_orchestrator_id,
+        "vault_role_id": body.vault_role_id,
     }
     return {"agent_id": agent_id, "status": "spawned"}
 
