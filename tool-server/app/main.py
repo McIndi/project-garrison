@@ -1,11 +1,31 @@
 from contextlib import asynccontextmanager
+import hashlib
+import json
+import re
+import time
 from urllib.parse import urlparse
+from uuid import uuid4
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
 
 from .config import settings
-from .models import FetchRequest, FetchResponse, HandoffRequest, MemoryWriteRequest, SpawnRequest
+from .models import (
+    FetchRequest,
+    FetchResponse,
+    HandoffRequest,
+    MemoryWriteRequest,
+    SearchRequest,
+    SearchResponse,
+    SearchResult,
+    SpawnRequest,
+    SummarizeRequest,
+    SummarizeResponse,
+    TransitDecryptRequest,
+    TransitDecryptResponse,
+    TransitEncryptRequest,
+    TransitEncryptResponse,
+)
 from .provisioning import provisioning
 from .security import AuthContext, require_auth_context
 from .storage import storage
@@ -31,6 +51,76 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="garrison-tool-server", lifespan=lifespan)
 
 
+def _audit_payload(raw: bytes) -> str:
+    mode = settings.audit_payload_mode
+    text = raw.decode("utf-8", errors="replace") if raw else ""
+    if mode == "hash-only":
+        return hashlib.sha256(raw).hexdigest() if raw else ""
+    if mode == "redacted":
+        redacted = re.sub(r'"(authorization|token|secret_id|role_id|password)"\s*:\s*"[^"]*"', '"\\1":"[REDACTED]"', text, flags=re.IGNORECASE)
+        redacted = re.sub(r"(Bearer\s+)[^\s\"]+", r"\1[REDACTED]", redacted, flags=re.IGNORECASE)
+        return redacted
+    return text
+
+
+def _maybe_body_json(raw: bytes) -> dict:
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw.decode("utf-8"))
+        return value if isinstance(value, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+@app.middleware("http")
+async def audit_http_request(request, call_next):
+    started_at = time.time()
+    trace_id = request.headers.get("x-trace-id") or str(uuid4())
+    req_body = await request.body()
+    req_json = _maybe_body_json(req_body)
+
+    status_code = 500
+    error_text = ""
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+    except Exception as exc:  # noqa: BLE001
+        error_text = str(exc)
+        raise
+    finally:
+        elapsed_ms = int((time.time() - started_at) * 1000)
+        path = request.url.path
+        event = {
+            "trace_id": trace_id,
+            "agent_id": request.headers.get("x-agent-id", ""),
+            "agent_class": request.headers.get("x-agent-class", ""),
+            "human_session_id": request.headers.get("x-human-session-id", ""),
+            "model_provider": req_json.get("model_provider", "local"),
+            "model_name": req_json.get("model_name", settings.summarize_model),
+            "token_counts": req_json.get("token_counts", {}),
+            "tool_name": path,
+            "status": "ok" if status_code < 400 else "error",
+            "status_code": status_code,
+            "duration_ms": elapsed_ms,
+            "timestamp": storage.utc_now_iso(),
+            "payload_mode": settings.audit_payload_mode,
+            "request_payload": _audit_payload(req_body),
+            "error": error_text,
+        }
+
+        if not settings.use_inmemory:
+            try:
+                client = provisioning._mongo_client()
+                client["garrison_audit"]["llm"].insert_one(event)
+            except Exception:  # noqa: BLE001
+                pass
+
+        print(json.dumps(event, default=str))
+
+    return response
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -48,6 +138,109 @@ def _validate_fetch_url(url: str) -> None:
         raise HTTPException(status_code=400, detail="Only http/https URLs are allowed")
     if not parsed.netloc:
         raise HTTPException(status_code=400, detail="Fetch URL must include host")
+
+
+def _extractive_summary(content: str, max_tokens: int) -> tuple[str, list[str]]:
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", content) if s.strip()]
+    if not sentences:
+        return "", []
+
+    max_words = max_tokens
+    selected: list[str] = []
+    used = 0
+    for sentence in sentences:
+        words = sentence.split()
+        if used + len(words) > max_words and selected:
+            break
+        selected.append(sentence)
+        used += len(words)
+        if used >= max_words:
+            break
+
+    key_points = selected[:5]
+    return " ".join(selected), key_points
+
+
+async def _summarize_with_ollama(content: str, max_tokens: int, output_format: str) -> tuple[str, list[str]]:
+    prompt = (
+        "Summarize the content. Return concise output. "
+        f"Format={output_format}. Max tokens={max_tokens}.\n\n{content}"
+    )
+    payload = {
+        "model": settings.summarize_model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"num_predict": max_tokens},
+    }
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.post(f"{settings.ollama_url}/api/generate", json=payload)
+    resp.raise_for_status()
+    text = resp.json().get("response", "").strip()
+    points = [line.lstrip("- ").strip() for line in text.splitlines() if line.strip()][:5]
+    return text, points
+
+
+async def _transit_encrypt(plaintext: str, key: str) -> str:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"{settings.vault_addr}/v1/transit/encrypt/{key}",
+            headers={"X-Vault-Token": settings.vault_token},
+            json={"plaintext": plaintext},
+        )
+        if resp.status_code == 404:
+            await client.post(
+                f"{settings.vault_addr}/v1/sys/mounts/transit",
+                headers={"X-Vault-Token": settings.vault_token},
+                json={"type": "transit"},
+            )
+            await client.post(
+                f"{settings.vault_addr}/v1/transit/keys/{key}",
+                headers={"X-Vault-Token": settings.vault_token},
+                json={"type": "aes256-gcm96"},
+            )
+            resp = await client.post(
+                f"{settings.vault_addr}/v1/transit/encrypt/{key}",
+                headers={"X-Vault-Token": settings.vault_token},
+                json={"plaintext": plaintext},
+            )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Transit encrypt failed: {resp.text}")
+    return resp.json().get("data", {}).get("ciphertext", "")
+
+
+async def _transit_decrypt(ciphertext: str, key: str) -> str:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"{settings.vault_addr}/v1/transit/decrypt/{key}",
+            headers={"X-Vault-Token": settings.vault_token},
+            json={"ciphertext": ciphertext},
+        )
+        if resp.status_code == 404:
+            await client.post(
+                f"{settings.vault_addr}/v1/sys/mounts/transit",
+                headers={"X-Vault-Token": settings.vault_token},
+                json={"type": "transit"},
+            )
+            await client.post(
+                f"{settings.vault_addr}/v1/transit/keys/{key}",
+                headers={"X-Vault-Token": settings.vault_token},
+                json={"type": "aes256-gcm96"},
+            )
+            resp = await client.post(
+                f"{settings.vault_addr}/v1/transit/decrypt/{key}",
+                headers={"X-Vault-Token": settings.vault_token},
+                json={"ciphertext": ciphertext},
+            )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Transit decrypt failed: {resp.text}")
+    return resp.json().get("data", {}).get("plaintext", "")
+
+
+def _parse_corpus(corpus: str) -> tuple[str, str]:
+    parts = corpus.split(".", 1)
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return corpus, "objects"
 
 
 @app.post("/tools/memory/{key:path}")
@@ -163,6 +356,83 @@ async def write_handoff(body: HandoffRequest, auth: AuthContext = Depends(requir
             raise HTTPException(status_code=503, detail=f"Mongo handoff write failed: {exc}") from exc
 
     return {"status": "ok", "key": f"registry:handoff:{body.from_agent_id}"}
+
+
+@app.post("/tools/summarize", response_model=SummarizeResponse)
+async def summarize(body: SummarizeRequest, _: AuthContext = Depends(require_auth_context)) -> SummarizeResponse:
+    summary: str
+    key_points: list[str]
+
+    if settings.summarize_mode == "ollama":
+        try:
+            summary, key_points = await _summarize_with_ollama(body.content, body.max_tokens, body.format)
+        except Exception:  # noqa: BLE001
+            summary, key_points = _extractive_summary(body.content, body.max_tokens)
+    else:
+        summary, key_points = _extractive_summary(body.content, body.max_tokens)
+
+    if body.format == "bullets":
+        summary_text = "\n".join(f"- {point}" for point in key_points)
+    elif body.format == "structured":
+        summary_text = "\n".join(f"point_{idx+1}: {point}" for idx, point in enumerate(key_points))
+    else:
+        summary_text = summary
+
+    return SummarizeResponse(summary=summary_text, key_points=key_points)
+
+
+@app.post("/tools/encrypt", response_model=TransitEncryptResponse)
+async def encrypt(body: TransitEncryptRequest, _: AuthContext = Depends(require_auth_context)) -> TransitEncryptResponse:
+    ciphertext = await _transit_encrypt(body.plaintext, body.key)
+    if not ciphertext:
+        raise HTTPException(status_code=502, detail="Transit encrypt response missing ciphertext")
+    return TransitEncryptResponse(ciphertext=ciphertext)
+
+
+@app.post("/tools/decrypt", response_model=TransitDecryptResponse)
+async def decrypt(body: TransitDecryptRequest, _: AuthContext = Depends(require_auth_context)) -> TransitDecryptResponse:
+    plaintext = await _transit_decrypt(body.ciphertext, body.key)
+    if not plaintext:
+        raise HTTPException(status_code=502, detail="Transit decrypt response missing plaintext")
+    return TransitDecryptResponse(plaintext=plaintext)
+
+
+@app.post("/tools/search", response_model=SearchResponse)
+async def search(body: SearchRequest, _: AuthContext = Depends(require_auth_context)) -> SearchResponse:
+    if settings.use_inmemory:
+        return SearchResponse(results=[])
+
+    corpus = body.corpus or settings.search_default_corpus
+    db_name, coll_name = _parse_corpus(corpus)
+    query = body.query.strip()
+
+    try:
+        client = provisioning._mongo_client()
+        coll = client[db_name][coll_name]
+        docs = list(coll.find({}, {"_id": 1, "summary": 1, "content": 1, "text": 1}).limit(200))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Search backend unavailable: {exc}") from exc
+
+    q = query.lower()
+    ranked: list[SearchResult] = []
+    for doc in docs:
+        text = str(doc.get("summary") or doc.get("content") or doc.get("text") or "")
+        if not text:
+            continue
+        score = float(text.lower().count(q))
+        if score <= 0:
+            continue
+        ranked.append(
+            SearchResult(
+                id=str(doc.get("_id")),
+                score=score,
+                summary=text[:240],
+                source=f"{db_name}.{coll_name}",
+            )
+        )
+
+    ranked.sort(key=lambda r: r.score, reverse=True)
+    return SearchResponse(results=ranked[: body.top_k])
 
 
 @app.post("/tools/spawn")

@@ -1,4 +1,6 @@
 import os
+import hashlib
+import json
 
 os.environ["TOOL_SERVER_INMEMORY"] = "true"
 os.environ["TOOL_SERVER_REQUIRE_TOKEN_LOOKUP"] = "false"
@@ -264,3 +266,110 @@ def test_handoff_write_success() -> None:
     assert resp.json()["status"] == "ok"
     handoff_key = "registry:handoff:agent-root"
     assert handoff_key in storage._mem_kv
+
+
+def test_summarize_extracts_key_points() -> None:
+    content = (
+        "Project Garrison provisions governed agents. "
+        "It enforces policy boundaries and records audit evidence. "
+        "Phase four expands tool coverage."
+    )
+    resp = client.post(
+        "/tools/summarize",
+        headers=BASE_HEADERS,
+        json={"content": content, "max_tokens": 80, "format": "bullets"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert isinstance(payload["key_points"], list)
+    assert len(payload["key_points"]) >= 1
+
+
+def test_encrypt_and_decrypt_transit(monkeypatch) -> None:
+    async def fake_post(url, headers, json):
+        class Resp:
+            status_code = 200
+            text = "ok"
+
+            @staticmethod
+            def json():
+                if "/encrypt/" in url:
+                    return {"data": {"ciphertext": "vault:v1:abc"}}
+                return {"data": {"plaintext": "aGVsbG8="}}
+
+        return Resp()
+
+    class DummyClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        post = staticmethod(fake_post)
+
+    monkeypatch.setattr("app.main.httpx.AsyncClient", lambda timeout: DummyClient())
+
+    enc = client.post(
+        "/tools/encrypt",
+        headers=BASE_HEADERS,
+        json={"plaintext": "aGVsbG8=", "key": "agent-payload"},
+    )
+    assert enc.status_code == 200
+    assert enc.json()["ciphertext"].startswith("vault:v1:")
+
+    dec = client.post(
+        "/tools/decrypt",
+        headers=BASE_HEADERS,
+        json={"ciphertext": "vault:v1:abc", "key": "agent-payload"},
+    )
+    assert dec.status_code == 200
+    assert dec.json()["plaintext"] == "aGVsbG8="
+
+
+def test_search_inmemory_returns_empty() -> None:
+    resp = client.post(
+        "/tools/search",
+        headers=BASE_HEADERS,
+        json={"query": "garrison", "corpus": "shared_artifacts.objects", "top_k": 5},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["results"] == []
+
+
+def test_audit_payload_hash_mode(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.settings.audit_payload_mode", "hash-only")
+
+    captured = {}
+
+    def fake_print(message: str):
+        captured["message"] = message
+
+    monkeypatch.setattr("builtins.print", fake_print)
+
+    body = {"value": "secret"}
+    resp = client.post("/tools/memory/agent:agent-root:audit", headers=BASE_HEADERS, json=body)
+    assert resp.status_code == 200
+    event = json.loads(captured["message"])
+    payload_hash = event["request_payload"]
+    assert len(payload_hash) == 64
+    int(payload_hash, 16)
+
+
+def test_audit_payload_redacted_mode(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.settings.audit_payload_mode", "redacted")
+
+    captured = {}
+
+    def fake_print(message: str):
+        captured["message"] = message
+
+    monkeypatch.setattr("builtins.print", fake_print)
+
+    resp = client.post(
+        "/tools/memory/agent:agent-root:auth",
+        headers=BASE_HEADERS,
+        json={"value": "ok", "token": "super-secret-token"},
+    )
+    assert resp.status_code == 200
+    assert "[REDACTED]" in captured["message"]

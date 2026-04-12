@@ -44,3 +44,49 @@ class HandoffRequest(BaseModel):
     memory_keys: list[str] = Field(default_factory=list)
     reasoning_summary: str = Field(min_length=1)
     priority: str = Field(pattern="^(low|normal|high)$")
+
+
+class SummarizeRequest(BaseModel):
+    content: str = Field(min_length=1)
+    max_tokens: int = Field(default=256, ge=16, le=4096)
+    format: str = Field(default="bullets", pattern="^(bullets|prose|structured)$")
+
+
+class SummarizeResponse(BaseModel):
+    summary: str
+    key_points: list[str]
+
+
+class TransitEncryptRequest(BaseModel):
+    plaintext: str = Field(min_length=1)
+    key: str = Field(pattern="^(agent-payload|shared-memory)$")
+
+
+class TransitEncryptResponse(BaseModel):
+    ciphertext: str
+
+
+class TransitDecryptRequest(BaseModel):
+    ciphertext: str = Field(min_length=1)
+    key: str = Field(pattern="^(agent-payload|shared-memory)$")
+
+
+class TransitDecryptResponse(BaseModel):
+    plaintext: str
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    corpus: str = Field(default="shared_artifacts.objects", min_length=1)
+    top_k: int = Field(default=5, ge=1, le=50)
+
+
+class SearchResult(BaseModel):
+    id: str
+    score: float
+    summary: str
+    source: str
+
+
+class SearchResponse(BaseModel):
+    results: list[SearchResult]
