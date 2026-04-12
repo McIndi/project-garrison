@@ -19,6 +19,20 @@ class ProvisioningService:
     def __init__(self) -> None:
         self._mongo: MongoClient | None = None
 
+    @staticmethod
+    def _role_policies(role_name: str) -> list[str]:
+        additive = {
+            "orchestrator": "garrison-orchestrator",
+            "rag": "garrison-rag",
+            "code": "garrison-code",
+            # analyst intentionally has no additive policy.
+        }
+        policies = ["default", "garrison-base"]
+        extra = additive.get(role_name)
+        if extra:
+            policies.append(extra)
+        return policies
+
     def _mongo_client(self) -> MongoClient:
         if self._mongo is None:
             self._mongo = MongoClient(settings.mongo_uri, serverSelectionTimeoutMS=3000)
@@ -43,6 +57,7 @@ class ProvisioningService:
 
     async def _ensure_role(self, role_name: str) -> None:
         ttl = settings.class_token_ttl.get(role_name, "1h")
+        token_policies = self._role_policies(role_name)
         async with httpx.AsyncClient(timeout=10) as client:
             role_resp = await client.post(
                 f"{settings.vault_addr}/v1/auth/approle/role/{role_name}",
@@ -53,6 +68,7 @@ class ProvisioningService:
                     "secret_id_num_uses": 1,
                     "secret_id_ttl": "30m",
                     "token_no_default_policy": False,
+                    "token_policies": token_policies,
                 },
             )
             role_resp.raise_for_status()

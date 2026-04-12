@@ -18,6 +18,11 @@ api_get() {
   curl -fsS -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}${path}"
 }
 
+api_list() {
+  local path="$1"
+  curl -fsS -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}${path}?list=true"
+}
+
 audit_json="$(api_get /v1/sys/audit)"
 auth_json="$(api_get /v1/sys/auth)"
 mounts_json="$(api_get /v1/sys/mounts)"
@@ -30,6 +35,15 @@ ok "Vault AppRole auth mount enabled"
 
 [[ "${mounts_json}" == *'"transit/"'* ]] || fail "Vault transit engine is missing"
 ok "Vault transit engine enabled"
+
+[[ "${mounts_json}" == *'"database/"'* ]] || fail "Vault database engine is missing"
+ok "Vault database engine enabled"
+
+policies_json="$(api_list /v1/sys/policies/acl)"
+for policy in garrison-base garrison-orchestrator garrison-rag garrison-code; do
+  [[ "${policies_json}" == *"\"${policy}\""* ]] || fail "Missing ACL policy: ${policy}"
+  ok "ACL policy exists: ${policy}"
+done
 
 for role in orchestrator code rag analyst; do
   role_json="$(api_get "/v1/auth/approle/role/${role}/role-id")"
