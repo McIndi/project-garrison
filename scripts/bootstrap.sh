@@ -18,6 +18,12 @@ echo "Starting core stack..."
 "${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d --build \
 	valkey mongo vault beeai-runtime otel-collector tool-server keycloak open-webui
 
+echo "Configuring Vault baseline for dynamic/auditable secrets..."
+"$ROOT_DIR/scripts/vault-bootstrap.sh"
+
+echo "Running Vault readiness checks..."
+"$ROOT_DIR/scripts/vault-readiness.sh"
+
 echo "Core stack started. Running sanity check..."
 "$ROOT_DIR/scripts/sanity-check.sh"
 

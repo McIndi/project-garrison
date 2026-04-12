@@ -79,7 +79,7 @@ services:
       TOOL_SERVER_MONGO_URI: mongodb://root:rootpass@mongo:27017
       TOOL_SERVER_VAULT_ADDR: http://vault:8200
       TOOL_SERVER_VAULT_TOKEN: root
-      TOOL_SERVER_REQUIRE_TOKEN_LOOKUP: "false"
+      TOOL_SERVER_REQUIRE_TOKEN_LOOKUP: "true"
       TOOL_SERVER_SPAWN_MAX_DEPTH: "2"
     depends_on:
       - valkey

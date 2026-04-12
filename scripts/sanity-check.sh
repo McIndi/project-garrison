@@ -2,6 +2,7 @@
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
+AUTH_BEARER_TOKEN="${AUTH_BEARER_TOKEN:-root}"
 
 echo "[1/10] Health check"
 for i in {1..20}; do
@@ -19,7 +20,7 @@ done
 echo
 
 HEADERS=(
-  -H "Authorization: Bearer demo-token"
+  -H "Authorization: Bearer ${AUTH_BEARER_TOKEN}"
   -H "x-agent-id: agent-root"
   -H "x-agent-class: orchestrator"
   -H "x-human-session-id: human-demo-001"
