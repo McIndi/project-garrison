@@ -474,6 +474,37 @@ The `tool-server` is the main policy enforcement gateway between agents and data
 9. `POST /tools/spawn` — dynamic agent provisioning via BeeAI runtime API (orchestrator class only)
 10. `DELETE /tools/spawn/{agent_id}` — dynamic agent teardown via BeeAI runtime API (orchestrator class only)
 11. `POST /tools/search` — MongoDB vector query (implement last, requires index setup)
+12. `POST /orchestrate` — user-request orchestration entrypoint that may invoke `POST /tools/spawn` internally (policy-mediated only)
+
+### Planned Orchestration Bridge (Next Increment)
+
+Add a minimal orchestration bridge so Open WebUI user actions do not call spawn directly.
+
+Proposed contract:
+- Endpoint: `POST /orchestrate`
+- Input:
+```json
+{
+  "request_text": "string",
+  "human_session_id": "string",
+  "preferred_agent_class": "orchestrator|code|rag|analyst (optional)"
+}
+```
+- Output:
+```json
+{
+  "workflow_id": "string",
+  "status": "accepted|completed|failed",
+  "spawned_agent_id": "string|null",
+  "result_summary": "string"
+}
+```
+
+Rules:
+1. Only tool-server may invoke `POST /tools/spawn`.
+2. Existing spawn controls remain authoritative (orchestrator-only, depth cap, spawn-tree ownership).
+3. `human_session_id` must be propagated to spawn, handoff, and audit events for end-to-end traceability.
+4. Open WebUI pipeline should call `/orchestrate` for delegated tasks and continue to emit inlet/outlet audit events.
 
 ---
 

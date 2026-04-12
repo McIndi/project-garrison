@@ -40,6 +40,30 @@ Exit Criteria:
 - Dynamic secret issuance + expiry verified.
 - Registry + token revoke lifecycle remains consistent.
 
+### Phase 6C - User Request Orchestration Bridge
+Goal: connect human requests to controlled dynamic delegation so BeeAI spawn is used by runtime workflows, not only tests/manual calls.
+
+Scope:
+1. Add a minimal orchestrator entrypoint in tool-server (for example `POST /orchestrate`) that accepts:
+   - `request_text`
+   - `human_session_id`
+   - optional `preferred_agent_class`
+2. Route orchestration only through tool-server policy checks and existing spawn controls.
+3. Keep spawn constraints unchanged:
+   - orchestrator-only spawn/delete
+   - max spawn depth
+   - root-orchestrator tree ownership checks
+4. Return a workflow envelope to caller:
+   - `workflow_id`
+   - `spawned_agent_id` (if delegation chosen)
+   - `status` (`accepted|completed|failed`)
+5. Wire Open WebUI pipeline path to this orchestrator entrypoint for selected actions.
+
+Exit Criteria:
+- A user request can trigger orchestrator delegation without direct `/tools/spawn` calls from the UI.
+- Audit records correlate `human_session_id` across Open WebUI pipeline, tool-server orchestration call, spawn, and handoff.
+- Negative tests pass for non-orchestrator spawn and over-depth spawn attempts.
+
 ### Phase 7 - Terraform/Packaging Alignment
 Goal: make runtime reproducible and handoff-ready.
 
@@ -59,6 +83,7 @@ Exit Criteria:
    - scripts/vault-readiness.sh
 3. Integrate these scripts into scripts/bootstrap.sh.
 4. Run full bootstrap and capture Vault-readiness output.
+5. Specify and implement the minimal orchestration bridge (`/orchestrate`) before expanding BeeAI worker lifecycle depth.
 
 ### Guardrails
 - All runtime operations remain tool-server mediated.
