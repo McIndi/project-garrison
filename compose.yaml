@@ -68,6 +68,13 @@ services:
     image: ghcr.io/open-webui/open-webui:main
     environment:
       WEBUI_AUTH: "False"
+      GARRISON_ORCHESTRATE_ENABLED: "true"
+      GARRISON_ORCHESTRATE_URL: http://tool-server:8080/orchestrate
+      GARRISON_ORCHESTRATE_BEARER_TOKEN: root
+      GARRISON_ORCHESTRATE_AGENT_ID: agent-root
+      GARRISON_ORCHESTRATE_AGENT_CLASS: orchestrator
+      GARRISON_ORCHESTRATE_ROOT_ID: agent-root
+      GARRISON_ORCHESTRATE_DEFAULT_CLASS: rag
     volumes:
       - ./open-webui/pipelines:/app/pipelines:ro
     ports:
