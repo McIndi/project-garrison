@@ -1,0 +1,97 @@
+# ------------------------------
+# Python (GitHub-style baseline)
+# ------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+.eggs/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing, coverage, type checking
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.pyre/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+
+# Tooling caches
+.ipynb_checkpoints/
+
+# ------------------------------
+# Terraform / OpenTofu
+# ------------------------------
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Keep lockfile committed for reproducible provider versions
+# .terraform.lock.hcl
+
+# ------------------------------
+# Containers / Compose / Podman
+# ------------------------------
+# Local overrides and ephemeral compose files
+compose.override.yaml
+compose.override.yml
+docker-compose.override.yml
+
+# Local container artifacts
+*.pid
+*.log
+logs/
+
+# ------------------------------
+# Secrets and local environment
+# ------------------------------
+.env
+.env.*
+!.env.example
+*.local
+
+# Generated secrets/certs/keys
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ------------------------------
+# Data directories (local runtime)
+# ------------------------------
+data/
+var/
+tmp/
+
+# ------------------------------
+# Editors / OS files
+# ------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
