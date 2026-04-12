@@ -112,9 +112,9 @@ path "transit/verify/artifact-signing" {
 # Database connection and role definitions (best effort in dev).
 api_post_optional "/v1/database/config/mongo" '{"plugin_name":"mongodb-database-plugin","allowed_roles":"mongo-readonly,mongo-rag-writer,mongo-code-writer","connection_url":"mongodb://{{username}}:{{password}}@mongo:27017/admin?authSource=admin","username":"root","password":"rootpass","verify_connection":false}'
 
-api_post_optional "/v1/database/roles/mongo-readonly" '{"db_name":"mongo","creation_statements":"[{\"db\":\"admin\",\"roles\":[{\"role\":\"read\",\"db\":\"admin\"}]}]","default_ttl":"1h","max_ttl":"24h"}'
-api_post_optional "/v1/database/roles/mongo-rag-writer" '{"db_name":"mongo","creation_statements":"[{\"db\":\"admin\",\"roles\":[{\"role\":\"readWrite\",\"db\":\"admin\"}]}]","default_ttl":"1h","max_ttl":"24h"}'
-api_post_optional "/v1/database/roles/mongo-code-writer" '{"db_name":"mongo","creation_statements":"[{\"db\":\"admin\",\"roles\":[{\"role\":\"readWrite\",\"db\":\"admin\"}]}]","default_ttl":"1h","max_ttl":"24h"}'
+api_post_optional "/v1/database/roles/mongo-readonly" '{"db_name":"mongo","creation_statements":"{\"db\":\"admin\",\"roles\":[{\"role\":\"read\",\"db\":\"admin\"}]}","default_ttl":"1h","max_ttl":"24h"}'
+api_post_optional "/v1/database/roles/mongo-rag-writer" '{"db_name":"mongo","creation_statements":"{\"db\":\"admin\",\"roles\":[{\"role\":\"readWrite\",\"db\":\"admin\"}]}","default_ttl":"1h","max_ttl":"24h"}'
+api_post_optional "/v1/database/roles/mongo-code-writer" '{"db_name":"mongo","creation_statements":"{\"db\":\"admin\",\"roles\":[{\"role\":\"readWrite\",\"db\":\"admin\"}]}","default_ttl":"1h","max_ttl":"24h"}'
 
 api_post_optional "/v1/database/config/valkey" '{"plugin_name":"redis-database-plugin","allowed_roles":"valkey-readonly","host":"valkey","port":6379,"username":"default","password":"","verify_connection":false}'
 api_post_optional "/v1/database/roles/valkey-readonly" '{"db_name":"valkey","creation_statements":"[\"ACL SETUSER {{name}} on >{{password}} ~* +@read\"]","revocation_statements":"[\"ACL DELUSER {{name}}\"]","default_ttl":"1h","max_ttl":"24h"}'

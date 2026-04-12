@@ -27,6 +27,9 @@ echo "Running Vault readiness checks..."
 echo "Running Vault policy matrix checks..."
 "$ROOT_DIR/scripts/vault-policy-check.sh"
 
+echo "Running Vault dynamic secrets lifecycle checks..."
+"$ROOT_DIR/scripts/vault-dynamic-secrets-check.sh"
+
 echo "Core stack started. Running sanity check..."
 "$ROOT_DIR/scripts/sanity-check.sh"
 

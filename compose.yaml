@@ -28,6 +28,7 @@ services:
       - "8200:8200"
     networks:
       - agent-net
+      - data-net
 
   beeai-runtime:
     build:
