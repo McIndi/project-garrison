@@ -1,5 +1,6 @@
 import json
 from collections.abc import Mapping
+from typing import Any
 
 from redis.asyncio import Redis
 
@@ -52,6 +53,15 @@ class Storage:
         if settings.use_inmemory:
             return self._mem_registry.get(agent_id)
         return await self._redis.hget("registry:agents", agent_id)
+
+    async def registry_get_record(self, agent_id: str) -> dict[str, Any] | None:
+        raw = await self.registry_get(agent_id)
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
 
     async def registry_delete(self, agent_id: str) -> None:
         if settings.use_inmemory:

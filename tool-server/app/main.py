@@ -73,6 +73,7 @@ async def spawn_agent(body: SpawnRequest, auth: AuthContext = Depends(require_au
         "parent_agent_id": auth.agent_id,
         "human_session_id": auth.human_session_id,
         "spawn_depth": auth.spawn_depth + 1,
+        "root_orchestrator_id": auth.root_orchestrator_id,
     }
     last_error = ""
     for _ in range(3):
@@ -89,6 +90,9 @@ async def spawn_agent(body: SpawnRequest, auth: AuthContext = Depends(require_au
                         "status": "active",
                         "spawned_by": auth.agent_id,
                         "human_session_id": auth.human_session_id,
+                        "parent_agent_id": auth.agent_id,
+                        "spawn_depth": str(auth.spawn_depth + 1),
+                        "root_orchestrator_id": auth.root_orchestrator_id,
                     },
                 )
                 return data
@@ -103,14 +107,19 @@ async def delete_spawn(agent_id: str, auth: AuthContext = Depends(require_auth_c
     if auth.agent_class != "orchestrator":
         raise HTTPException(status_code=403, detail="Only orchestrator can terminate")
 
-    record = await storage.registry_get(agent_id)
+    record = await storage.registry_get_record(agent_id)
     if not record:
         return {"agent_id": agent_id, "status": "not_found"}
+
+    owner_root = record.get("root_orchestrator_id")
+    if owner_root and owner_root != auth.root_orchestrator_id:
+        raise HTTPException(status_code=403, detail="Agent is outside caller spawn tree")
 
     payload = {
         "agent_id": agent_id,
         "requestor_agent_id": auth.agent_id,
         "human_session_id": auth.human_session_id,
+        "root_orchestrator_id": auth.root_orchestrator_id,
     }
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(f"{settings.beeai_url}/terminate", json=payload)

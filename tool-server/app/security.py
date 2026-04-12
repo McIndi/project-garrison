@@ -13,6 +13,7 @@ class AuthContext:
     agent_class: str
     human_session_id: str
     spawn_depth: int
+    root_orchestrator_id: str
 
 
 async def _lookup_vault_token(token: str) -> dict:
@@ -33,6 +34,7 @@ async def require_auth_context(
     x_agent_class: str | None = Header(default=None),
     x_human_session_id: str | None = Header(default=None),
     x_spawn_depth: str | None = Header(default="0"),
+    x_root_orchestrator_id: str | None = Header(default=None),
 ) -> AuthContext:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
@@ -54,10 +56,18 @@ async def require_auth_context(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid x-spawn-depth") from exc
 
+    if spawn_depth == 0:
+        root_orchestrator_id = x_root_orchestrator_id or x_agent_id
+    else:
+        if not x_root_orchestrator_id:
+            raise HTTPException(status_code=400, detail="Missing x-root-orchestrator-id for nested spawn")
+        root_orchestrator_id = x_root_orchestrator_id
+
     return AuthContext(
         token=token,
         agent_id=x_agent_id,
         agent_class=x_agent_class,
         human_session_id=x_human_session_id,
         spawn_depth=spawn_depth,
+        root_orchestrator_id=root_orchestrator_id,
     )

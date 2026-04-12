@@ -18,6 +18,7 @@ BASE_HEADERS = {
     "x-agent-class": "orchestrator",
     "x-human-session-id": "human-123",
     "x-spawn-depth": "0",
+    "x-root-orchestrator-id": "agent-root",
 }
 
 
@@ -60,4 +61,29 @@ def test_spawn_depth_limit_enforced() -> None:
         headers=headers,
         json={"agent_class": "rag", "task_context": "ctx", "memory_keys": []},
     )
+    assert resp.status_code == 403
+
+
+def test_nested_spawn_requires_root_orchestrator_header() -> None:
+    headers = dict(BASE_HEADERS)
+    headers["x-spawn-depth"] = "1"
+    headers.pop("x-root-orchestrator-id")
+    resp = client.post(
+        "/tools/spawn",
+        headers=headers,
+        json={"agent_class": "rag", "task_context": "ctx", "memory_keys": []},
+    )
+    assert resp.status_code == 400
+
+
+def test_delete_rejects_other_spawn_tree(monkeypatch) -> None:
+    async def fake_registry_get_record(_: str):
+        return {
+            "agent_id": "agt-abc",
+            "root_orchestrator_id": "other-root",
+        }
+
+    monkeypatch.setattr("app.main.storage.registry_get_record", fake_registry_get_record)
+
+    resp = client.delete("/tools/spawn/agt-abc", headers=BASE_HEADERS)
     assert resp.status_code == 403

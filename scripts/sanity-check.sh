@@ -24,6 +24,7 @@ HEADERS=(
   -H "x-agent-class: orchestrator"
   -H "x-human-session-id: human-demo-001"
   -H "x-spawn-depth: 0"
+  -H "x-root-orchestrator-id: agent-root"
   -H "Content-Type: application/json"
 )
 
