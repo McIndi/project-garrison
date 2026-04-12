@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from collections.abc import Mapping
 from typing import Any
 
@@ -68,6 +69,35 @@ class Storage:
             self._mem_registry.pop(agent_id, None)
             return
         await self._redis.hdel("registry:agents", agent_id)
+
+    async def registry_list(self) -> list[dict[str, Any]]:
+        raw: dict[str, str]
+        if settings.use_inmemory:
+            raw = dict(self._mem_registry)
+        else:
+            raw = await self._redis.hgetall("registry:agents")
+
+        out: list[dict[str, Any]] = []
+        for agent_id, payload in raw.items():
+            try:
+                record = json.loads(payload)
+                if isinstance(record, dict):
+                    out.append(record)
+            except json.JSONDecodeError:
+                out.append({"agent_id": agent_id, "raw": payload})
+        return out
+
+    async def write_handoff(self, from_agent_id: str, payload: Mapping[str, Any]) -> None:
+        key = f"registry:handoff:{from_agent_id}"
+        serialized = json.dumps(dict(payload))
+        if settings.use_inmemory:
+            self._mem_kv[key] = serialized
+            return
+        await self._redis.set(key, serialized)
+
+    @staticmethod
+    def utc_now_iso() -> str:
+        return datetime.now(UTC).isoformat()
 
 
 storage = Storage()

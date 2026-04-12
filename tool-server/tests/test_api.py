@@ -7,6 +7,7 @@ os.environ["TOOL_SERVER_SPAWN_MAX_DEPTH"] = "2"
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.storage import storage
 
 
 client = TestClient(app)
@@ -173,3 +174,93 @@ def test_delete_revokes_accessor(monkeypatch) -> None:
     resp = client.delete("/tools/spawn/agt-abc", headers=BASE_HEADERS)
     assert resp.status_code == 200
     assert revoked["called"] is True
+
+
+def test_scratch_roundtrip() -> None:
+    key = "notes/current"
+    write = client.post(f"/tools/scratch/{key}", headers=BASE_HEADERS, json={"value": "draft"})
+    assert write.status_code == 200
+    read = client.get(f"/tools/scratch/{key}", headers=BASE_HEADERS)
+    assert read.status_code == 200
+    assert read.json()["value"] == "draft"
+
+
+def test_registry_endpoint_returns_agents() -> None:
+    resp = client.get("/tools/registry", headers=BASE_HEADERS)
+    assert resp.status_code == 200
+    assert "agents" in resp.json()
+    assert isinstance(resp.json()["agents"], list)
+
+
+def test_fetch_rejects_invalid_scheme() -> None:
+    resp = client.post(
+        "/tools/fetch",
+        headers=BASE_HEADERS,
+        json={"url": "ftp://example.com/file.txt", "method": "GET"},
+    )
+    assert resp.status_code == 400
+
+
+def test_fetch_success(monkeypatch) -> None:
+    async def fake_request(method, url, headers, content):
+        class Resp:
+            status_code = 200
+            text = "ok"
+            headers = {"content-type": "text/plain"}
+
+        return Resp()
+
+    class DummyClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        request = staticmethod(fake_request)
+
+    monkeypatch.setattr("app.main.httpx.AsyncClient", lambda timeout, follow_redirects: DummyClient())
+
+    resp = client.post(
+        "/tools/fetch",
+        headers=BASE_HEADERS,
+        json={"url": "https://example.com", "method": "GET"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == 200
+    assert resp.json()["body"] == "ok"
+
+
+def test_handoff_write_requires_matching_agent() -> None:
+    resp = client.post(
+        "/tools/handoff",
+        headers=BASE_HEADERS,
+        json={
+            "from_agent_id": "other-agent",
+            "to_agent_class": "rag",
+            "task_context": "review docs",
+            "artifacts": [],
+            "memory_keys": [],
+            "reasoning_summary": "handoff",
+            "priority": "normal",
+        },
+    )
+    assert resp.status_code == 403
+
+
+def test_handoff_write_success() -> None:
+    payload = {
+        "from_agent_id": "agent-root",
+        "to_agent_class": "rag",
+        "task_context": "review docs",
+        "artifacts": [{"type": "note", "ref": "obj-1"}],
+        "memory_keys": ["shared:memory:brief"],
+        "reasoning_summary": "Please summarize source",
+        "priority": "high",
+    }
+
+    resp = client.post("/tools/handoff", headers=BASE_HEADERS, json=payload)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    handoff_key = "registry:handoff:agent-root"
+    assert handoff_key in storage._mem_kv
