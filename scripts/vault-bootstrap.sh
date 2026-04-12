@@ -116,8 +116,8 @@ api_post_optional "/v1/database/roles/mongo-readonly" '{"db_name":"mongo","creat
 api_post_optional "/v1/database/roles/mongo-rag-writer" '{"db_name":"mongo","creation_statements":"{\"db\":\"admin\",\"roles\":[{\"role\":\"readWrite\",\"db\":\"admin\"}]}","default_ttl":"1h","max_ttl":"24h"}'
 api_post_optional "/v1/database/roles/mongo-code-writer" '{"db_name":"mongo","creation_statements":"{\"db\":\"admin\",\"roles\":[{\"role\":\"readWrite\",\"db\":\"admin\"}]}","default_ttl":"1h","max_ttl":"24h"}'
 
-api_post_optional "/v1/database/config/valkey" '{"plugin_name":"redis-database-plugin","allowed_roles":"valkey-readonly","host":"valkey","port":6379,"username":"default","password":"","verify_connection":false}'
-api_post_optional "/v1/database/roles/valkey-readonly" '{"db_name":"valkey","creation_statements":"[\"ACL SETUSER {{name}} on >{{password}} ~* +@read\"]","revocation_statements":"[\"ACL DELUSER {{name}}\"]","default_ttl":"1h","max_ttl":"24h"}'
+api_post_optional "/v1/database/config/valkey" '{"plugin_name":"redis-database-plugin","allowed_roles":"valkey-readonly","host":"valkey","port":6379,"username":"default","password":"rootpass","verify_connection":false}'
+api_post_optional "/v1/database/roles/valkey-readonly" '{"db_name":"valkey","creation_statements":"[\"~*\",\"+@read\"]","default_ttl":"1h","max_ttl":"24h"}'
 
 # Ensure core roles exist with TTL and policy assignment.
 api_post "/v1/auth/approle/role/orchestrator" '{"token_ttl":"4h","token_max_ttl":"4h","secret_id_num_uses":1,"secret_id_ttl":"30m","token_policies":["default","garrison-base","garrison-orchestrator"]}'

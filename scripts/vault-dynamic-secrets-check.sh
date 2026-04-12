@@ -109,6 +109,6 @@ echo "Validating dynamic secret lifecycle (issue, renew, revoke)..."
 validate_role_lifecycle "mongo-readonly" "required"
 validate_role_lifecycle "mongo-rag-writer" "required"
 validate_role_lifecycle "mongo-code-writer" "required"
-validate_role_lifecycle "valkey-readonly" "optional"
+validate_role_lifecycle "valkey-readonly" "required"
 
 echo "Vault dynamic secrets lifecycle checks passed."

@@ -1,6 +1,10 @@
 services:
   valkey:
     image: docker.io/valkey/valkey:latest
+    command:
+      - valkey-server
+      - --requirepass
+      - rootpass
     ports:
       - "6379:6379"
     networks:
@@ -76,7 +80,7 @@ services:
       context: ./tool-server
     environment:
       TOOL_SERVER_BEEAI_URL: http://beeai-runtime:8090
-      TOOL_SERVER_VALKEY_URL: redis://valkey:6379/0
+      TOOL_SERVER_VALKEY_URL: redis://:rootpass@valkey:6379/0
       TOOL_SERVER_MONGO_URI: mongodb://root:rootpass@mongo:27017
       TOOL_SERVER_VAULT_ADDR: http://vault:8200
       TOOL_SERVER_VAULT_TOKEN: root
