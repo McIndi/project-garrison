@@ -1,0 +1,101 @@
+services:
+  valkey:
+    image: docker.io/valkey/valkey:latest
+    ports:
+      - "6379:6379"
+    networks:
+      - data-net
+
+  mongo:
+    image: docker.io/library/mongo:8.0
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: rootpass
+    ports:
+      - "27017:27017"
+    networks:
+      - data-net
+
+  vault:
+    image: docker.io/hashicorp/vault:1.17
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: root
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    command: vault server -dev -dev-root-token-id=root
+    ports:
+      - "8200:8200"
+    networks:
+      - agent-net
+
+  beeai-runtime:
+    build:
+      context: ./beeai-runtime
+    environment:
+      BEEAI_API_KEY: demo
+    ports:
+      - "8090:8090"
+    networks:
+      - agent-net
+      - data-net
+
+  otel-collector:
+    image: docker.io/otel/opentelemetry-collector-contrib:0.110.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./config/otel/collector.yaml:/etc/otelcol-contrib/config.yaml:ro,Z
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    networks:
+      - data-net
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8081:8080"
+    networks:
+      - agent-net
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    environment:
+      WEBUI_AUTH: "False"
+    volumes:
+      - ./open-webui/pipelines:/app/pipelines:ro
+    ports:
+      - "3000:8080"
+    networks:
+      - agent-net
+
+  tool-server:
+    build:
+      context: ./tool-server
+    environment:
+      TOOL_SERVER_BEEAI_URL: http://beeai-runtime:8090
+      TOOL_SERVER_VALKEY_URL: redis://valkey:6379/0
+      TOOL_SERVER_VAULT_ADDR: http://vault:8200
+      TOOL_SERVER_VAULT_TOKEN: root
+      TOOL_SERVER_REQUIRE_TOKEN_LOOKUP: "false"
+      TOOL_SERVER_SPAWN_MAX_DEPTH: "2"
+    depends_on:
+      - valkey
+      - beeai-runtime
+      - vault
+      - otel-collector
+    ports:
+      - "8080:8080"
+    networks:
+      - agent-net
+      - data-net
+
+networks:
+  agent-net:
+    driver: bridge
+  data-net:
+    driver: bridge
