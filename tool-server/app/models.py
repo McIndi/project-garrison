@@ -12,6 +12,19 @@ class SpawnRequest(BaseModel):
     memory_keys: list[str] = Field(default_factory=list)
 
 
+class OrchestrateRequest(BaseModel):
+    request_text: str = Field(min_length=1)
+    human_session_id: str = Field(min_length=1)
+    preferred_agent_class: str | None = Field(default=None, pattern="^(orchestrator|code|rag|analyst)$")
+
+
+class OrchestrateResponse(BaseModel):
+    workflow_id: str
+    status: str = Field(pattern="^(accepted|completed|failed)$")
+    spawned_agent_id: str | None = None
+    result_summary: str
+
+
 class SpawnResponse(BaseModel):
     agent_id: str
     status: str

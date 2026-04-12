@@ -135,6 +135,82 @@ def test_missing_human_session_gets_system_id(monkeypatch) -> None:
     assert resp.status_code == 200
 
 
+def test_orchestrate_defaults_to_rag(monkeypatch) -> None:
+    captured = {}
+
+    async def fake_issue_spawn_credentials(_: str):
+        class Creds:
+            role_id = "role-id"
+            secret_id = "secret-id"
+            token_accessor = "acc-123"
+
+        return Creds()
+
+    async def fake_post(url, json):
+        captured["payload"] = json
+
+        class Resp:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"agent_id": "agt-rag-1", "status": "spawned"}
+
+        return Resp()
+
+    class DummyClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        post = staticmethod(fake_post)
+
+    monkeypatch.setattr("app.main.provisioning.issue_spawn_credentials", fake_issue_spawn_credentials)
+    monkeypatch.setattr("app.main.provisioning.provision_agent_collections", lambda _: None)
+    monkeypatch.setattr("app.main.httpx.AsyncClient", lambda timeout: DummyClient())
+
+    resp = client.post(
+        "/orchestrate",
+        headers=BASE_HEADERS,
+        json={"request_text": "summarize docs", "human_session_id": "human-123"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "accepted"
+    assert payload["spawned_agent_id"] == "agt-rag-1"
+    assert captured["payload"]["agent_class"] == "rag"
+
+
+def test_orchestrate_handles_locally_for_orchestrator_preference() -> None:
+    resp = client.post(
+        "/orchestrate",
+        headers=BASE_HEADERS,
+        json={
+            "request_text": "plan task",
+            "human_session_id": "human-123",
+            "preferred_agent_class": "orchestrator",
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "completed"
+    assert payload["spawned_agent_id"] is None
+
+
+def test_orchestrate_requires_orchestrator_class() -> None:
+    headers = dict(BASE_HEADERS)
+    headers["x-agent-class"] = "rag"
+
+    resp = client.post(
+        "/orchestrate",
+        headers=headers,
+        json={"request_text": "summarize docs", "human_session_id": "human-123"},
+    )
+    assert resp.status_code == 403
+
+
 def test_delete_revokes_accessor(monkeypatch) -> None:
     async def fake_registry_get_record(_: str):
         return {

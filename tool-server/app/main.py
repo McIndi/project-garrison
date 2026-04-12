@@ -15,6 +15,8 @@ from .models import (
     FetchResponse,
     HandoffRequest,
     MemoryWriteRequest,
+    OrchestrateRequest,
+    OrchestrateResponse,
     SearchRequest,
     SearchResponse,
     SearchResult,
@@ -243,6 +245,55 @@ def _parse_corpus(corpus: str) -> tuple[str, str]:
     return corpus, "objects"
 
 
+async def _spawn_with_auth(body: SpawnRequest, auth: AuthContext) -> dict:
+    if auth.agent_class != "orchestrator":
+        raise HTTPException(status_code=403, detail="Only orchestrator can spawn")
+    if auth.spawn_depth >= settings.spawn_max_depth:
+        raise HTTPException(status_code=403, detail="Spawn depth limit exceeded")
+
+    human_session_id = auth.human_session_id or provisioning.system_session_id()
+    creds = await provisioning.issue_spawn_credentials(body.agent_class)
+
+    payload = {
+        "agent_class": body.agent_class,
+        "task_context": body.task_context,
+        "memory_keys": body.memory_keys,
+        "parent_agent_id": auth.agent_id,
+        "human_session_id": human_session_id,
+        "spawn_depth": auth.spawn_depth + 1,
+        "root_orchestrator_id": auth.root_orchestrator_id,
+        "vault_role_id": creds.role_id,
+        "vault_secret_id": creds.secret_id,
+    }
+    last_error = ""
+    for _ in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(f"{settings.beeai_url}/spawn", json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                provisioning.provision_agent_collections(data["agent_id"])
+                await storage.registry_upsert(
+                    data["agent_id"],
+                    {
+                        "agent_id": data["agent_id"],
+                        "class": body.agent_class,
+                        "status": "active",
+                        "spawned_by": auth.agent_id,
+                        "human_session_id": human_session_id,
+                        "parent_agent_id": auth.agent_id,
+                        "spawn_depth": str(auth.spawn_depth + 1),
+                        "root_orchestrator_id": auth.root_orchestrator_id,
+                        "vault_token_accessor": creds.token_accessor,
+                    },
+                )
+                return data
+            last_error = resp.text
+        except Exception as exc:  # noqa: BLE001
+            last_error = str(exc)
+    raise HTTPException(status_code=503, detail=f"Spawn failed after retries: {last_error}")
+
+
 @app.post("/tools/memory/{key:path}")
 async def post_memory(
     key: str,
@@ -435,54 +486,42 @@ async def search(body: SearchRequest, _: AuthContext = Depends(require_auth_cont
     return SearchResponse(results=ranked[: body.top_k])
 
 
+@app.post("/orchestrate", response_model=OrchestrateResponse)
+async def orchestrate(body: OrchestrateRequest, auth: AuthContext = Depends(require_auth_context)) -> OrchestrateResponse:
+    if auth.agent_class != "orchestrator":
+        raise HTTPException(status_code=403, detail="Only orchestrator can orchestrate")
+
+    workflow_id = f"wf-{uuid4().hex[:12]}"
+    target_class = body.preferred_agent_class or "rag"
+
+    if target_class == "orchestrator":
+        return OrchestrateResponse(
+            workflow_id=workflow_id,
+            status="completed",
+            spawned_agent_id=None,
+            result_summary="Handled by orchestrator without delegation.",
+        )
+
+    spawn_result = await _spawn_with_auth(
+        SpawnRequest(
+            agent_class=target_class,
+            task_context=body.request_text,
+            memory_keys=[f"shared:memory:workflow:{workflow_id}"],
+        ),
+        auth,
+    )
+
+    return OrchestrateResponse(
+        workflow_id=workflow_id,
+        status="accepted",
+        spawned_agent_id=spawn_result.get("agent_id"),
+        result_summary=f"Delegated request to {target_class} agent.",
+    )
+
+
 @app.post("/tools/spawn")
 async def spawn_agent(body: SpawnRequest, auth: AuthContext = Depends(require_auth_context)) -> dict:
-    if auth.agent_class != "orchestrator":
-        raise HTTPException(status_code=403, detail="Only orchestrator can spawn")
-    if auth.spawn_depth >= settings.spawn_max_depth:
-        raise HTTPException(status_code=403, detail="Spawn depth limit exceeded")
-
-    human_session_id = auth.human_session_id or provisioning.system_session_id()
-    creds = await provisioning.issue_spawn_credentials(body.agent_class)
-
-    payload = {
-        "agent_class": body.agent_class,
-        "task_context": body.task_context,
-        "memory_keys": body.memory_keys,
-        "parent_agent_id": auth.agent_id,
-        "human_session_id": human_session_id,
-        "spawn_depth": auth.spawn_depth + 1,
-        "root_orchestrator_id": auth.root_orchestrator_id,
-        "vault_role_id": creds.role_id,
-        "vault_secret_id": creds.secret_id,
-    }
-    last_error = ""
-    for _ in range(3):
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.post(f"{settings.beeai_url}/spawn", json=payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                provisioning.provision_agent_collections(data["agent_id"])
-                await storage.registry_upsert(
-                    data["agent_id"],
-                    {
-                        "agent_id": data["agent_id"],
-                        "class": body.agent_class,
-                        "status": "active",
-                        "spawned_by": auth.agent_id,
-                        "human_session_id": human_session_id,
-                        "parent_agent_id": auth.agent_id,
-                        "spawn_depth": str(auth.spawn_depth + 1),
-                        "root_orchestrator_id": auth.root_orchestrator_id,
-                        "vault_token_accessor": creds.token_accessor,
-                    },
-                )
-                return data
-            last_error = resp.text
-        except Exception as exc:  # noqa: BLE001
-            last_error = str(exc)
-    raise HTTPException(status_code=503, detail=f"Spawn failed after retries: {last_error}")
+    return await _spawn_with_auth(body, auth)
 
 
 @app.delete("/tools/spawn/{agent_id}")
