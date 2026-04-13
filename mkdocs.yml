@@ -21,7 +21,7 @@ nav:
   - Operations: operations.md
   - Auth Hardening Plan: auth-hardening-plan.md
   - IaC and Phase 7: iac.md
-  - Security Assessment: Security-Assessment-Pass-001.md
+  - Security Assessment 001: Security-Assessment-Pass-001.md
 
 markdown_extensions:
   - admonition
