@@ -61,7 +61,7 @@ flowchart TB
   - Stores tool-server audit events and ingested Vault/Nginx logs.
 - OTel Collector:
   - Deployed in compose and configured with OTLP receiver plus debug exporter.
-  - Current app code paths do not emit OTLP directly yet.
+  - tool-server audit middleware emits OTLP logs to collector.
 
 ## Design Constraints Enforced in Code
 

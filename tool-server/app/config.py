@@ -21,6 +21,9 @@ class Settings:
     fetch_require_proxy = os.getenv("TOOL_SERVER_FETCH_REQUIRE_PROXY", "true").lower() == "true"
     audit_payload_mode = os.getenv("GARRISON_AUDIT_PAYLOAD_MODE", "full")
     audit_ingest_token = os.getenv("TOOL_SERVER_AUDIT_INGEST_TOKEN", "")
+    otel_enabled = os.getenv("TOOL_SERVER_OTEL_ENABLED", "true").lower() == "true"
+    otel_logs_endpoint = os.getenv("TOOL_SERVER_OTEL_LOGS_ENDPOINT", "http://otel-collector:4318/v1/logs")
+    otel_timeout_ms = int(os.getenv("TOOL_SERVER_OTEL_TIMEOUT_MS", "2000"))
     class_token_ttl = {
         "orchestrator": "4h",
         "code": "2h",

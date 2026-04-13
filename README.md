@@ -49,7 +49,8 @@ flowchart LR
 Notes about accuracy:
 
 - Keycloak is deployed in compose, but Open WebUI local config currently has WEBUI_AUTH set to False.
-- OTel collector local config currently exports to debug, and current app code paths do not emit OTLP directly.
+- OTel collector local config currently exports to debug.
+- tool-server now emits audit events as OTLP logs to the collector endpoint.
 - Nginx is active in local compose as the outbound fetch proxy for tool-server.
 - Fluent Bit is active in local compose, tails Vault and Nginx logs, and forwards records to tool-server internal audit ingest endpoints that persist to MongoDB.
 
@@ -106,6 +107,13 @@ Internal endpoints used by local audit pipeline:
 - Spawn depth is capped by TOOL_SERVER_SPAWN_MAX_DEPTH (currently 2).
 - Nested spawn/delete is constrained by root_orchestrator_id ownership checks.
 - Human session propagation is enforced through x-human-session-id and orchestration payloads.
+- OTEL forwarding from tool-server is best-effort and does not block request handling.
+
+## Telemetry Settings
+
+- TOOL_SERVER_OTEL_ENABLED (default: true)
+- TOOL_SERVER_OTEL_LOGS_ENDPOINT (default: http://otel-collector:4318/v1/logs)
+- TOOL_SERVER_OTEL_TIMEOUT_MS (default: 2000)
 
 ## Infrastructure as Code Status
 

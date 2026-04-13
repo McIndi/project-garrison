@@ -7,6 +7,7 @@ os.environ["TOOL_SERVER_REQUIRE_TOKEN_LOOKUP"] = "false"
 os.environ["TOOL_SERVER_SPAWN_MAX_DEPTH"] = "2"
 os.environ["TOOL_SERVER_FETCH_PROXY_URL"] = "http://proxy.local:8088"
 os.environ["TOOL_SERVER_FETCH_REQUIRE_PROXY"] = "true"
+os.environ["TOOL_SERVER_OTEL_ENABLED"] = "false"
 
 from fastapi.testclient import TestClient
 from fastapi import HTTPException
@@ -667,3 +668,37 @@ def test_audit_ingest_parses_json_lines_and_persists(monkeypatch) -> None:
     assert captured["docs"][0]["parsed_log"] == {"event": "vault"}
     assert captured["docs"][1]["parsed_log"] is None
     assert captured["docs"][2]["record"] == {"log": "raw line fallback"}
+
+
+def test_audit_middleware_emits_otel_when_enabled(monkeypatch) -> None:
+    emitted = {"event": None}
+
+    async def fake_emit(event: dict):
+        emitted["event"] = event
+
+    monkeypatch.setattr("app.main.settings.otel_enabled", True)
+    monkeypatch.setattr("app.main._emit_otel_log", fake_emit)
+
+    resp = client.post(
+        "/tools/memory/agent:agent-root:otel",
+        headers=BASE_HEADERS,
+        json={"value": "ok"},
+    )
+    assert resp.status_code == 200
+    assert emitted["event"] is not None
+    assert emitted["event"]["tool_name"] == "/tools/memory/agent:agent-root:otel"
+
+
+def test_audit_middleware_ignores_otel_failures(monkeypatch) -> None:
+    async def fake_emit(_: dict):
+        raise RuntimeError("otel down")
+
+    monkeypatch.setattr("app.main.settings.otel_enabled", True)
+    monkeypatch.setattr("app.main._emit_otel_log", fake_emit)
+
+    resp = client.post(
+        "/tools/memory/agent:agent-root:otel-fail",
+        headers=BASE_HEADERS,
+        json={"value": "ok"},
+    )
+    assert resp.status_code == 200

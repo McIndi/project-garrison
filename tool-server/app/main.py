@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import time
+from datetime import datetime
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -76,6 +77,50 @@ def _maybe_body_json(raw: bytes) -> dict:
         return {}
 
 
+async def _emit_otel_log(event: dict) -> None:
+    if not settings.otel_enabled:
+        return
+
+    ts = datetime.fromisoformat(event["timestamp"])
+    payload = {
+        "resourceLogs": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "garrison-tool-server"}},
+                        {"key": "service.namespace", "value": {"stringValue": "project-garrison"}},
+                    ]
+                },
+                "scopeLogs": [
+                    {
+                        "scope": {"name": "garrison.audit"},
+                        "logRecords": [
+                            {
+                                "timeUnixNano": str(int(ts.timestamp() * 1_000_000_000)),
+                                "severityText": "ERROR" if event["status"] == "error" else "INFO",
+                                "body": {"stringValue": json.dumps(event, default=str)},
+                                "attributes": [
+                                    {"key": "trace_id", "value": {"stringValue": event["trace_id"]}},
+                                    {"key": "tool_name", "value": {"stringValue": event["tool_name"]}},
+                                    {"key": "agent_id", "value": {"stringValue": event["agent_id"]}},
+                                    {"key": "agent_class", "value": {"stringValue": event["agent_class"]}},
+                                    {"key": "status_code", "value": {"intValue": event["status_code"]}},
+                                    {"key": "duration_ms", "value": {"intValue": event["duration_ms"]}},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+    timeout_s = max(settings.otel_timeout_ms, 1) / 1000
+    async with httpx.AsyncClient(timeout=timeout_s) as otel_client:
+        resp = await otel_client.post(settings.otel_logs_endpoint, json=payload)
+        resp.raise_for_status()
+
+
 @app.middleware("http")
 async def audit_http_request(request, call_next):
     started_at = time.time()
@@ -118,6 +163,12 @@ async def audit_http_request(request, call_next):
                 client["garrison_audit"]["llm"].insert_one(event)
             except Exception:  # noqa: BLE001
                 pass
+
+        try:
+            await _emit_otel_log(event)
+        except Exception:  # noqa: BLE001
+            # Telemetry forwarding is best-effort and must not break runtime requests.
+            pass
 
         print(json.dumps(event, default=str))
 
