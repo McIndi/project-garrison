@@ -71,7 +71,7 @@ trap cleanup EXIT
 
 cd "$ROOT_DIR"
 
-run_with_retry "bootstrap" bash scripts/bootstrap.sh
+run_with_retry "bootstrap" bash -x scripts/bootstrap.sh
 
 if [[ "${CI_INSTALL_DEPS:-false}" == "true" ]]; then
   "$PYTHON_BIN" -m pip install --upgrade pip
