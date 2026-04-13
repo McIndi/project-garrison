@@ -25,10 +25,21 @@ fi
 
 echo "Starting core stack..."
 "${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d --build \
-	valkey mongo vault beeai-runtime nginx fluent-bit otel-collector tool-server keycloak open-webui
+	valkey mongo vault beeai-runtime nginx fluent-bit otel-collector tool-server keycloak
 
 echo "Configuring Vault baseline for dynamic/auditable secrets..."
 "$ROOT_DIR/scripts/vault-bootstrap.sh"
+
+echo "Issuing scoped Open WebUI orchestrate token from Vault..."
+OPENWEBUI_ORCH_TOKEN="$("$ROOT_DIR/scripts/issue-openwebui-token.sh")"
+if [[ -z "${OPENWEBUI_ORCH_TOKEN}" ]]; then
+	echo "Failed to obtain Open WebUI orchestration token"
+	exit 1
+fi
+
+echo "Starting Open WebUI with runtime-scoped orchestrate token..."
+GARRISON_ORCHESTRATE_BEARER_TOKEN="${OPENWEBUI_ORCH_TOKEN}" \
+	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d open-webui
 
 echo "Running Vault readiness checks..."
 "$ROOT_DIR/scripts/vault-readiness.sh"

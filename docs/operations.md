@@ -12,6 +12,7 @@ Bootstrap includes:
 
 - Compose up and image build.
 - Vault baseline config.
+- Open WebUI scoped orchestrate token issuance from Vault and Open WebUI startup with injected token.
 - Vault readiness checks.
 - Vault policy matrix checks.
 - Vault dynamic secret lifecycle checks.
@@ -31,6 +32,12 @@ Run CI-equivalent command:
 
 ```bash
 bash scripts/ci-smoke.sh
+```
+
+Issue only the Open WebUI orchestrate service token:
+
+```bash
+bash scripts/issue-openwebui-token.sh
 ```
 
 Optional environment knobs:

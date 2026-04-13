@@ -22,7 +22,7 @@ class Pipeline:
         self.orchestrate_agent_id = os.getenv("GARRISON_ORCHESTRATE_AGENT_ID", "agent-root")
         self.orchestrate_agent_class = os.getenv("GARRISON_ORCHESTRATE_AGENT_CLASS", "orchestrator")
         self.orchestrate_root_id = os.getenv("GARRISON_ORCHESTRATE_ROOT_ID", self.orchestrate_agent_id)
-        self.orchestrate_bearer_token = os.getenv("GARRISON_ORCHESTRATE_BEARER_TOKEN", "root")
+        self.orchestrate_bearer_token = os.getenv("GARRISON_ORCHESTRATE_BEARER_TOKEN", "")
         self.orchestrate_preferred_class = os.getenv("GARRISON_ORCHESTRATE_DEFAULT_CLASS", "rag")
         self.otel_enabled = os.getenv("GARRISON_OTEL_ENABLED", "true").lower() == "true"
         self.otel_logs_endpoint = os.getenv("GARRISON_OTEL_LOGS_ENDPOINT", "http://otel-collector:4318/v1/logs")
@@ -146,6 +146,9 @@ class Pipeline:
     async def _maybe_orchestrate(self, body: dict[str, Any], human_session_id: str) -> dict[str, Any] | None:
         if not self.orchestrate_enabled:
             return None
+
+        if not self.orchestrate_bearer_token:
+            raise RuntimeError("Missing GARRISON_ORCHESTRATE_BEARER_TOKEN")
 
         request_text = self._extract_request_text(body)
         if not request_text:

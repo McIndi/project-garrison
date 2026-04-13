@@ -1,6 +1,9 @@
 import asyncio
 import importlib.util
+import os
 from pathlib import Path
+
+os.environ["GARRISON_ORCHESTRATE_BEARER_TOKEN"] = "test-orchestrate-token"
 
 
 def _load_pipeline_module():
@@ -130,3 +133,19 @@ def test_outlet_ignores_otel_failure() -> None:
     result = asyncio.run(pipeline.outlet(body, {"session_id": "human-sess-4"}))
 
     assert result is body
+
+
+def test_inlet_sets_orchestration_error_when_bearer_missing(monkeypatch) -> None:
+    pipeline = Pipeline()
+    pipeline.orchestrate_bearer_token = ""
+
+    async def fake_emit(stage, body, user):
+        return None
+
+    monkeypatch.setattr(pipeline, "_emit_otel_log", fake_emit)
+
+    body = {"messages": [{"role": "user", "content": "run task"}], "metadata": {}}
+    result = asyncio.run(pipeline.inlet(body, {"session_id": "human-sess-5"}))
+
+    assert "garrison_orchestration_error" in result["metadata"]
+    assert "GARRISON_ORCHESTRATE_BEARER_TOKEN" in result["metadata"]["garrison_orchestration_error"]
