@@ -56,6 +56,7 @@ Notes about accuracy:
 - Fluent Bit -> tool-server audit ingest token is generated at bootstrap and injected at runtime (no static compose token literal).
 - Open WebUI pipeline enforces claim-based orchestration authorization (required role/group and `sub`/`iss` identity claims) before calling tool-server.
 - Open WebUI pipeline validates OIDC token claims for orchestration authorization (`iss`, `aud`, `exp` with skew tolerance).
+- Open WebUI role/group authorization mapping mode is configurable (`any` or `all`).
 - Nginx is active in local compose as the outbound fetch proxy for tool-server.
 - Fluent Bit is active in local compose, tails Vault and Nginx logs, and forwards records to tool-server internal audit ingest endpoints that persist to MongoDB.
 

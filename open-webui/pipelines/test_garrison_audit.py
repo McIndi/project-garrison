@@ -331,3 +331,70 @@ def test_inlet_sets_orchestration_error_when_token_expired(monkeypatch) -> None:
 
     assert "garrison_orchestration_error" in result["metadata"]
     assert "expired" in result["metadata"]["garrison_orchestration_error"]
+
+
+def test_authorization_any_mode_allows_role_match() -> None:
+    pipeline = Pipeline()
+    pipeline.orchestrate_required_roles = {"garrison-orchestrator"}
+    pipeline.orchestrate_required_groups = {"garrison-orchestrators"}
+    pipeline.orchestrate_authz_mode = "any"
+    pipeline.orchestrate_require_user_claims = False
+    pipeline.oidc_required_issuer = ""
+    pipeline.oidc_required_audience = ""
+    pipeline.oidc_require_exp = False
+
+    user = {
+        "sub": "user-900",
+        "iss": "https://keycloak.local/realms/garrison",
+        "roles": ["garrison-orchestrator"],
+        "groups": ["analysts"],
+    }
+    claims = pipeline._authorize_orchestration(user)
+
+    assert claims["sub"] == "user-900"
+
+
+def test_authorization_all_mode_requires_both_role_and_group() -> None:
+    pipeline = Pipeline()
+    pipeline.orchestrate_required_roles = {"garrison-orchestrator"}
+    pipeline.orchestrate_required_groups = {"garrison-orchestrators"}
+    pipeline.orchestrate_authz_mode = "all"
+    pipeline.orchestrate_require_user_claims = False
+    pipeline.oidc_required_issuer = ""
+    pipeline.oidc_required_audience = ""
+    pipeline.oidc_require_exp = False
+
+    user = {
+        "sub": "user-901",
+        "iss": "https://keycloak.local/realms/garrison",
+        "roles": ["garrison-orchestrator"],
+        "groups": ["analysts"],
+    }
+
+    try:
+        pipeline._authorize_orchestration(user)
+    except PermissionError as exc:
+        assert "not authorized" in str(exc)
+    else:
+        raise AssertionError("Expected authorization to fail in all mode without group match")
+
+
+def test_authorization_all_mode_allows_when_both_match() -> None:
+    pipeline = Pipeline()
+    pipeline.orchestrate_required_roles = {"garrison-orchestrator"}
+    pipeline.orchestrate_required_groups = {"garrison-orchestrators"}
+    pipeline.orchestrate_authz_mode = "all"
+    pipeline.orchestrate_require_user_claims = False
+    pipeline.oidc_required_issuer = ""
+    pipeline.oidc_required_audience = ""
+    pipeline.oidc_require_exp = False
+
+    user = {
+        "sub": "user-902",
+        "iss": "https://keycloak.local/realms/garrison",
+        "roles": ["garrison-orchestrator"],
+        "groups": ["garrison-orchestrators"],
+    }
+    claims = pipeline._authorize_orchestration(user)
+
+    assert claims["sub"] == "user-902"

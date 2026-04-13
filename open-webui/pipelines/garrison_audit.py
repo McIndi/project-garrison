@@ -27,6 +27,7 @@ class Pipeline:
         self.orchestrate_preferred_class = os.getenv("GARRISON_ORCHESTRATE_DEFAULT_CLASS", "rag")
         self.orchestrate_required_roles = self._csv_env("GARRISON_ORCHESTRATE_REQUIRED_ROLES")
         self.orchestrate_required_groups = self._csv_env("GARRISON_ORCHESTRATE_REQUIRED_GROUPS")
+        self.orchestrate_authz_mode = os.getenv("GARRISON_ORCHESTRATE_AUTHZ_MODE", "any").lower().strip()
         self.orchestrate_require_user_claims = os.getenv("GARRISON_ORCHESTRATE_REQUIRE_USER_CLAIMS", "true").lower() == "true"
         self.oidc_required_issuer = os.getenv("GARRISON_OIDC_REQUIRED_ISSUER", "").strip()
         self.oidc_required_audience = os.getenv("GARRISON_OIDC_REQUIRED_AUDIENCE", "").strip()
@@ -94,7 +95,16 @@ class Pipeline:
 
         role_match = not self.orchestrate_required_roles or bool(set(claims["roles"]) & self.orchestrate_required_roles)
         group_match = not self.orchestrate_required_groups or bool(set(claims["groups"]) & self.orchestrate_required_groups)
-        if not role_match and not group_match:
+
+        if self.orchestrate_authz_mode not in {"any", "all"}:
+            raise PermissionError("Invalid orchestration authz mode configured")
+
+        if self.orchestrate_authz_mode == "all":
+            authorized = role_match and group_match
+        else:
+            authorized = role_match or group_match
+
+        if not authorized:
             raise PermissionError("User is not authorized for orchestration")
 
         return claims
