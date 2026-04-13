@@ -46,6 +46,14 @@ async function main() {
 
   const failures = [];
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "garrison-mermaid-"));
+  const puppeteerConfigPath = path.join(tmpRoot, "puppeteer-config.json");
+  fs.writeFileSync(
+    puppeteerConfigPath,
+    JSON.stringify({
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    }),
+    "utf8"
+  );
 
   const localMmdc = path.join(root, "node_modules", ".bin", process.platform === "win32" ? "mmdc.cmd" : "mmdc");
   const mmdcCommand = fs.existsSync(localMmdc) ? localMmdc : "npx";
@@ -63,7 +71,15 @@ async function main() {
       try {
         execFileSync(
           mmdcCommand,
-          [...mmdcBaseArgs, "-i", inputPath, "-o", outputPath],
+          [
+            ...mmdcBaseArgs,
+            "-i",
+            inputPath,
+            "-o",
+            outputPath,
+            "-p",
+            puppeteerConfigPath,
+          ],
           { stdio: "pipe" }
         );
       } catch (error) {
