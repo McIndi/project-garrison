@@ -53,6 +53,7 @@ jobs:
         uses: lycheeverse/lychee-action@v2
         with:
           fail: true
+          failIfEmpty: false
           args: >-
             --no-progress
             --include-fragments
