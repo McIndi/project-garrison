@@ -28,6 +28,7 @@ Most tool-server runtime endpoints require:
 | /orchestrate | POST | Human request orchestration bridge |
 | /tools/spawn | POST | Spawn new delegated agent |
 | /tools/spawn/{agent_id} | DELETE | Terminate delegated agent |
+| /internal/audit/ingest/{source} | POST | Internal Fluent Bit ingest for source in {vault, nginx} |
 
 ## Orchestration Request
 

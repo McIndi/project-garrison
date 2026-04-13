@@ -15,7 +15,15 @@ Bootstrap includes:
 - Vault readiness checks.
 - Vault policy matrix checks.
 - Vault dynamic secret lifecycle checks.
+- Nginx proxy readiness checks.
+- Audit evidence checks (Vault + Nginx logs via Fluent Bit into MongoDB).
 - Runtime sanity checks.
+
+Run only audit evidence checks:
+
+```bash
+bash scripts/audit-pipeline-check.sh
+```
 
 ## Smoke Flow
 
@@ -50,4 +58,5 @@ python -m pytest -q test_garrison_audit.py
 
 - If Open WebUI is not ready after bootstrap, inspect compose status and logs.
 - If Vault checks fail, re-run vault-bootstrap.sh before readiness scripts.
+- If audit evidence checks fail, inspect fluent-bit and tool-server logs and confirm MongoDB is reachable at 127.0.0.1:27017.
 - If token lookup failures occur, verify Vault is reachable and token is valid.

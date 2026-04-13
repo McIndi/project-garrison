@@ -15,6 +15,8 @@ flowchart TB
       TS2[tool-server]
       BR[beeai-runtime]
       VA2[Vault]
+      NX[Nginx]
+      FB[Fluent Bit]
       VK[Valkey]
       MG[MongoDB]
       OT[OTel Collector]
@@ -23,9 +25,13 @@ flowchart TB
     User((User)) --> OW
     OW --> TS
     TS --> BR
+    TS --> NX
     TS --> VK
     TS --> MG
     TS --> VA
+    VA --> FB
+    NX --> FB
+    FB --> TS
     OW -. planned telemetry wiring .-> OT
     TS -. planned telemetry wiring .-> OT
 ```
@@ -44,10 +50,15 @@ flowchart TB
   - Spawn and terminate handlers with in-memory agent map.
 - Vault:
   - Token lookup, AppRole role/secret issuance, transit operations.
+- Nginx:
+  - Outbound fetch proxy used by tool-server.
+- Fluent Bit:
+  - Tails Vault audit and Nginx access logs.
+  - Forwards records to tool-server internal ingest endpoints.
 - Valkey:
   - Shared memory and registry data.
 - MongoDB:
-  - Audit collection and per-agent database collections.
+  - Stores tool-server audit events and ingested Vault/Nginx logs.
 - OTel Collector:
   - Deployed in compose and configured with OTLP receiver plus debug exporter.
   - Current app code paths do not emit OTLP directly yet.

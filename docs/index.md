@@ -10,6 +10,8 @@ Project Garrison is a policy-governed runtime for spawning, coordinating, and au
 - Vault is used for token lookup, AppRole issuance, and transit crypto.
 - Valkey backs memory and registry state.
 - MongoDB receives runtime audit and artifact-related writes.
+- Nginx is deployed as the tool-server fetch egress proxy.
+- Fluent Bit tails Vault and Nginx logs and forwards events to tool-server internal audit ingest endpoints.
 - OTel Collector is enabled and currently exports to debug in local mode.
 
 ## Quick Start
@@ -33,6 +35,8 @@ The smoke path validates:
 - Vault bootstrap and readiness.
 - Vault class policy matrix.
 - Vault dynamic secret issue/renew/revoke lifecycle.
+- Nginx proxy readiness and access-log evidence.
+- Audit evidence flow: Vault + Nginx logs -> Fluent Bit -> tool-server ingest -> MongoDB.
 - Runtime endpoint sanity including spawn, delete, and orchestrate bridge.
 - Python test suites for tool-server and pipeline behavior.
 
@@ -40,4 +44,4 @@ The smoke path validates:
 
 - Keycloak is deployed in compose but Open WebUI local auth is disabled.
 - OTel currently exports to debug in collector config.
-- Nginx and Fluent Bit are in spec direction, not current local compose.
+- OTel emission from app code is still planned; local collector is present.

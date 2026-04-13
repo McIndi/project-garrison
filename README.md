@@ -50,7 +50,8 @@ Notes about accuracy:
 
 - Keycloak is deployed in compose, but Open WebUI local config currently has WEBUI_AUTH set to False.
 - OTel collector local config currently exports to debug, and current app code paths do not emit OTLP directly.
-- Nginx and Fluent Bit are part of the broader spec direction but are not currently in local compose.
+- Nginx is active in local compose as the outbound fetch proxy for tool-server.
+- Fluent Bit is active in local compose, tails Vault and Nginx logs, and forwards records to tool-server internal audit ingest endpoints that persist to MongoDB.
 
 ## Request and Delegation Flow
 
@@ -93,6 +94,10 @@ Tool-server primary endpoints:
 - Spawn lifecycle: POST /tools/spawn, DELETE /tools/spawn/{agent_id}
 - Orchestration bridge: POST /orchestrate
 
+Internal endpoints used by local audit pipeline:
+
+- Audit ingest: POST /internal/audit/ingest/{source}
+
 ## Security and Policy Model
 
 - All runtime calls require Bearer auth and agent identity headers.
@@ -123,6 +128,7 @@ Primary commands from repository root:
 
 - Full local bootstrap and verification: bash scripts/bootstrap.sh
 - Single command CI-equivalent smoke run: bash scripts/ci-smoke.sh
+- Standalone audit evidence check: bash scripts/audit-pipeline-check.sh
 - Tool-server tests: cd tool-server && python -m pytest -q tests
 - Pipeline tests: cd open-webui/pipelines && python -m pytest -q test_garrison_audit.py
 

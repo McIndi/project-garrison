@@ -9,6 +9,8 @@ sequenceDiagram
     participant TS as tool-server
     participant VA as Vault
     participant BR as beeai-runtime
+    participant NX as Nginx
+    participant FB as Fluent Bit
     participant VK as Valkey
     participant MG as MongoDB
 
@@ -25,8 +27,15 @@ sequenceDiagram
     TS->>BR: POST /spawn (class, context, ids, vault creds)
     BR-->>TS: agent_id spawned
 
+    TS->>NX: POST /tools/fetch proxied request (when used)
+    NX-->>TS: upstream response
+
     TS->>VK: registry_upsert(agent metadata)
-    TS->>MG: create agent collections and write audit events
+    TS->>MG: create agent collections and write tool-server audit events
+    VA->>FB: append audit.log entries
+    NX->>FB: append access.log entries
+    FB->>TS: POST /internal/audit/ingest/{vault|nginx}
+    TS->>MG: persist ingested vault/nginx audit documents
 
     TS-->>OW: workflow_id + spawned_agent_id + status
     OW-->>User: accepted / completed response
