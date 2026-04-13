@@ -106,6 +106,7 @@ Internal endpoints used by local audit pipeline:
 
 - All runtime calls require Bearer auth and agent identity headers.
 - Vault token lookup is enabled in compose via TOOL_SERVER_REQUIRE_TOKEN_LOOKUP=true.
+- Vault token metadata contract is enforced (`agent_id` and `agent_class` claims required under strict binding).
 - Spawn/terminate is orchestrator-only.
 - Spawn depth is capped by TOOL_SERVER_SPAWN_MAX_DEPTH (currently 2).
 - Nested spawn/delete is constrained by root_orchestrator_id ownership checks.

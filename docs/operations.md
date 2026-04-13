@@ -14,6 +14,7 @@ Bootstrap includes:
 - Vault baseline config.
 - Runtime audit ingest token generation and injection for Fluent Bit/tool-server.
 - Open WebUI scoped orchestrate token issuance from Vault and Open WebUI startup with injected token.
+- Strict token metadata contract enforcement in tool-server (`agent_id`, `agent_class`).
 - Vault readiness checks.
 - Vault policy matrix checks.
 - Vault dynamic secret lifecycle checks.

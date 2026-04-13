@@ -29,16 +29,17 @@ def _infer_agent_class_from_policies(policies: list[str]) -> str | None:
     return None
 
 
-def _lookup_identity_claims(payload: dict) -> tuple[str | None, str | None, bool]:
+def _lookup_identity_claims(payload: dict) -> tuple[str | None, str | None, str | None, bool]:
     data = payload.get("data") or {}
     meta = data.get("meta") or {}
     display_name = str(data.get("display_name") or "")
     policies = [str(p) for p in data.get("policies", [])]
 
     claimed_agent_id = meta.get("agent_id")
-    claimed_agent_class = meta.get("agent_class") or _infer_agent_class_from_policies(policies)
+    metadata_agent_class = meta.get("agent_class")
+    inferred_agent_class = _infer_agent_class_from_policies(policies)
     is_root_token = display_name == "root" or "root" in policies
-    return claimed_agent_id, claimed_agent_class, is_root_token
+    return claimed_agent_id, metadata_agent_class, inferred_agent_class, is_root_token
 
 
 async def _lookup_vault_token(token: str) -> dict:
@@ -75,11 +76,16 @@ async def require_auth_context(
         raise HTTPException(status_code=400, detail="Missing x-agent-id or x-agent-class")
 
     if settings.require_token_lookup and settings.enforce_token_identity_binding:
-        claimed_agent_id, claimed_agent_class, is_root_token = _lookup_identity_claims(lookup_payload)
+        claimed_agent_id, metadata_agent_class, inferred_agent_class, is_root_token = _lookup_identity_claims(lookup_payload)
+        claimed_agent_class = metadata_agent_class or inferred_agent_class
 
         can_fallback = settings.allow_header_identity_fallback
         if is_root_token and settings.allow_root_token_fallback:
             can_fallback = True
+
+        if settings.require_token_metadata_contract and not can_fallback:
+            if not claimed_agent_id or not metadata_agent_class:
+                raise HTTPException(status_code=403, detail="Token metadata contract is missing required identity claims")
 
         if claimed_agent_id and claimed_agent_id != x_agent_id:
             raise HTTPException(status_code=403, detail="x-agent-id does not match token identity")

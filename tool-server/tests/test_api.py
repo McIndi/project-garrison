@@ -331,7 +331,7 @@ def test_registry_requires_token_lookup_when_enabled(monkeypatch) -> None:
                 "id": "tok",
                 "display_name": "token",
                 "policies": ["default", "garrison-base", "garrison-orchestrator"],
-                "meta": {"agent_id": "agent-root"},
+                "meta": {"agent_id": "agent-root", "agent_class": "orchestrator"},
             }
         }
 
@@ -346,6 +346,7 @@ def test_registry_requires_token_lookup_when_enabled(monkeypatch) -> None:
 def test_security_defaults_disable_identity_fallbacks() -> None:
     from app.config import settings
 
+    assert settings.require_token_metadata_contract is True
     assert settings.allow_header_identity_fallback is False
     assert settings.allow_root_token_fallback is False
 
@@ -367,7 +368,7 @@ def test_registry_rejects_agent_class_mismatch_from_token_claims(monkeypatch) ->
             "data": {
                 "display_name": "token",
                 "policies": ["default", "garrison-base", "garrison-rag"],
-                "meta": {"agent_id": "agent-root"},
+                "meta": {"agent_id": "agent-root", "agent_class": "rag"},
             }
         }
 
@@ -385,7 +386,7 @@ def test_registry_rejects_agent_id_mismatch_from_token_claims(monkeypatch) -> No
             "data": {
                 "display_name": "token",
                 "policies": ["default", "garrison-base", "garrison-orchestrator"],
-                "meta": {"agent_id": "agent-other"},
+                "meta": {"agent_id": "agent-other", "agent_class": "orchestrator"},
             }
         }
 
@@ -411,6 +412,26 @@ def test_registry_rejects_missing_claims_when_fallback_disabled(monkeypatch) -> 
     monkeypatch.setattr("app.security.settings.enforce_token_identity_binding", True)
     monkeypatch.setattr("app.security.settings.allow_header_identity_fallback", False)
     monkeypatch.setattr("app.security.settings.allow_root_token_fallback", False)
+    monkeypatch.setattr("app.security._lookup_vault_token", fake_lookup)
+
+    resp = client.get("/tools/registry", headers=BASE_HEADERS)
+    assert resp.status_code == 403
+
+
+def test_registry_rejects_missing_agent_class_metadata_when_contract_required(monkeypatch) -> None:
+    async def fake_lookup(_: str):
+        return {
+            "data": {
+                "display_name": "token",
+                "policies": ["default", "garrison-base", "garrison-orchestrator"],
+                "meta": {"agent_id": "agent-root"},
+            }
+        }
+
+    monkeypatch.setattr("app.security.settings.require_token_lookup", True)
+    monkeypatch.setattr("app.security.settings.enforce_token_identity_binding", True)
+    monkeypatch.setattr("app.security.settings.require_token_metadata_contract", True)
+    monkeypatch.setattr("app.security.settings.allow_header_identity_fallback", False)
     monkeypatch.setattr("app.security._lookup_vault_token", fake_lookup)
 
     resp = client.get("/tools/registry", headers=BASE_HEADERS)
