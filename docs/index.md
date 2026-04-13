@@ -13,6 +13,7 @@ Project Garrison is a policy-governed runtime for spawning, coordinating, and au
 - Nginx is deployed as the tool-server fetch egress proxy.
 - Fluent Bit tails Vault and Nginx logs and forwards events to tool-server internal audit ingest endpoints.
 - OTel Collector is enabled, and tool-server audit middleware emits OTLP logs to it (collector exports debug in local mode).
+- Open WebUI garrison_audit pipeline also emits OTLP logs for inlet/outlet events.
 
 ## Quick Start
 
@@ -44,4 +45,4 @@ The smoke path validates:
 
 - Keycloak is deployed in compose but Open WebUI local auth is disabled.
 - OTel currently exports to debug in collector config.
-- Open WebUI-side OTLP emission remains a future increment.
+- OTLP logs are emitted by both tool-server and Open WebUI pipeline in local mode.

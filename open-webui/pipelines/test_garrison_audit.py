@@ -94,3 +94,39 @@ def test_inlet_orchestrate_failure_is_non_fatal(monkeypatch) -> None:
     result = asyncio.run(pipeline.inlet(body, {"session_id": "human-sess-2"}))
 
     assert "garrison_orchestration_error" in result["metadata"]
+
+
+def test_inlet_emits_otel_when_enabled(monkeypatch) -> None:
+    pipeline = Pipeline()
+    pipeline.otel_enabled = True
+    captured = {"stage": None}
+
+    async def fake_emit(stage, body, user):
+        captured["stage"] = stage
+
+    async def fake_maybe_orchestrate(body, human_session_id):
+        return None
+
+    monkeypatch.setattr(pipeline, "_emit_otel_log", fake_emit)
+    monkeypatch.setattr(pipeline, "_maybe_orchestrate", fake_maybe_orchestrate)
+
+    body = {"messages": [{"role": "user", "content": "hello"}], "metadata": {}}
+    result = asyncio.run(pipeline.inlet(body, {"session_id": "human-sess-3"}))
+
+    assert result["metadata"]["human_session_id"] == "human-sess-3"
+    assert captured["stage"] == "inlet"
+
+
+def test_outlet_ignores_otel_failure() -> None:
+    pipeline = Pipeline()
+    pipeline.otel_enabled = True
+
+    async def fake_emit(stage, body, user):
+        raise RuntimeError("collector down")
+
+    pipeline._emit_otel_log = fake_emit  # type: ignore[method-assign]
+
+    body = {"messages": [{"role": "assistant", "content": "ok"}], "metadata": {}}
+    result = asyncio.run(pipeline.outlet(body, {"session_id": "human-sess-4"}))
+
+    assert result is body

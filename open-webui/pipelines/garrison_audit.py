@@ -1,8 +1,4 @@
-"""Open WebUI pipeline stub for Garrison audit forwarding.
-
-This is a placeholder that captures request/response metadata and can
-forward it to OTel collector in future phases.
-"""
+"""Open WebUI pipeline for Garrison audit and telemetry forwarding."""
 
 from __future__ import annotations
 
@@ -28,6 +24,9 @@ class Pipeline:
         self.orchestrate_root_id = os.getenv("GARRISON_ORCHESTRATE_ROOT_ID", self.orchestrate_agent_id)
         self.orchestrate_bearer_token = os.getenv("GARRISON_ORCHESTRATE_BEARER_TOKEN", "root")
         self.orchestrate_preferred_class = os.getenv("GARRISON_ORCHESTRATE_DEFAULT_CLASS", "rag")
+        self.otel_enabled = os.getenv("GARRISON_OTEL_ENABLED", "true").lower() == "true"
+        self.otel_logs_endpoint = os.getenv("GARRISON_OTEL_LOGS_ENDPOINT", "http://otel-collector:4318/v1/logs")
+        self.otel_timeout_seconds = float(os.getenv("GARRISON_OTEL_TIMEOUT_SECONDS", "2"))
 
     def _payload_repr(self, payload: dict[str, Any]) -> str:
         raw = json.dumps(payload, default=str).encode("utf-8")
@@ -57,6 +56,54 @@ class Pipeline:
             "payload": self._payload_repr(body if isinstance(body, dict) else {"raw": str(body)}),
         }
         print(json.dumps(event, default=str))
+
+    async def _emit_otel_log(self, stage: str, body: dict[str, Any], user: dict[str, Any] | None = None) -> None:
+        if not self.otel_enabled:
+            return
+
+        meta = body.get("metadata", {}) if isinstance(body, dict) else {}
+        ts = datetime.now(UTC)
+        event_body = {
+            "trace_id": meta.get("trace_id") or str(uuid4()),
+            "stage": stage,
+            "human_session_id": (user or {}).get("session_id") or meta.get("human_session_id") or "system:bootstrap",
+            "model": meta.get("model", "unknown"),
+            "pipeline": self.name,
+        }
+
+        payload = {
+            "resourceLogs": [
+                {
+                    "resource": {
+                        "attributes": [
+                            {"key": "service.name", "value": {"stringValue": "garrison-open-webui-pipeline"}},
+                            {"key": "service.namespace", "value": {"stringValue": "project-garrison"}},
+                        ]
+                    },
+                    "scopeLogs": [
+                        {
+                            "scope": {"name": "garrison.open-webui.audit"},
+                            "logRecords": [
+                                {
+                                    "timeUnixNano": str(int(ts.timestamp() * 1_000_000_000)),
+                                    "severityText": "INFO",
+                                    "body": {"stringValue": json.dumps(event_body, default=str)},
+                                    "attributes": [
+                                        {"key": "stage", "value": {"stringValue": stage}},
+                                        {"key": "trace_id", "value": {"stringValue": event_body["trace_id"]}},
+                                        {"key": "pipeline", "value": {"stringValue": self.name}},
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        async with httpx.AsyncClient(timeout=self.otel_timeout_seconds) as client:
+            resp = await client.post(self.otel_logs_endpoint, json=payload)
+            resp.raise_for_status()
 
     @staticmethod
     def _extract_request_text(body: dict[str, Any]) -> str:
@@ -134,9 +181,21 @@ class Pipeline:
         except Exception as exc:  # noqa: BLE001
             body["metadata"]["garrison_orchestration_error"] = str(exc)
 
+        try:
+            await self._emit_otel_log("inlet", body, user)
+        except Exception:  # noqa: BLE001
+            # Telemetry forwarding is best-effort and should not block UI processing.
+            pass
+
         self._emit_event("inlet", body, user)
         return body
 
     async def outlet(self, body: dict[str, Any], user: dict[str, Any] | None = None) -> dict[str, Any]:
+        try:
+            await self._emit_otel_log("outlet", body, user)
+        except Exception:  # noqa: BLE001
+            # Telemetry forwarding is best-effort and should not block UI processing.
+            pass
+
         self._emit_event("outlet", body, user)
         return body

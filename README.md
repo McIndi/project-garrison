@@ -51,6 +51,7 @@ Notes about accuracy:
 - Keycloak is deployed in compose, but Open WebUI local config currently has WEBUI_AUTH set to False.
 - OTel collector local config currently exports to debug.
 - tool-server now emits audit events as OTLP logs to the collector endpoint.
+- Open WebUI garrison_audit pipeline now emits inlet/outlet OTLP logs to the collector endpoint.
 - Nginx is active in local compose as the outbound fetch proxy for tool-server.
 - Fluent Bit is active in local compose, tails Vault and Nginx logs, and forwards records to tool-server internal audit ingest endpoints that persist to MongoDB.
 
@@ -114,6 +115,12 @@ Internal endpoints used by local audit pipeline:
 - TOOL_SERVER_OTEL_ENABLED (default: true)
 - TOOL_SERVER_OTEL_LOGS_ENDPOINT (default: http://otel-collector:4318/v1/logs)
 - TOOL_SERVER_OTEL_TIMEOUT_MS (default: 2000)
+
+Open WebUI pipeline settings:
+
+- GARRISON_OTEL_ENABLED (default: true)
+- GARRISON_OTEL_LOGS_ENDPOINT (default: http://otel-collector:4318/v1/logs)
+- GARRISON_OTEL_TIMEOUT_SECONDS (default: 2)
 
 ## Infrastructure as Code Status
 

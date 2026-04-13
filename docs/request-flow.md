@@ -13,8 +13,10 @@ sequenceDiagram
     participant FB as Fluent Bit
     participant VK as Valkey
     participant MG as MongoDB
+    participant OT as OTel Collector
 
     User->>OW: Ask for task execution
+    OW->>OT: OTLP log emit (inlet)
     OW->>TS: POST /orchestrate
     Note over OW,TS: Headers include bearer + agent identity + human_session_id
 
@@ -36,8 +38,10 @@ sequenceDiagram
     NX->>FB: append access.log entries
     FB->>TS: POST /internal/audit/ingest/{vault|nginx}
     TS->>MG: persist ingested vault/nginx audit documents
+    TS->>OT: OTLP log emit (tool-server audit middleware)
 
     TS-->>OW: workflow_id + spawned_agent_id + status
+    OW->>OT: OTLP log emit (outlet)
     OW-->>User: accepted / completed response
 ```
 

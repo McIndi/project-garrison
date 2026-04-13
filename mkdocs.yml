@@ -19,6 +19,7 @@ nav:
   - Request Flow: request-flow.md
   - API Reference: api.md
   - Operations: operations.md
+  - Auth Hardening Plan: auth-hardening-plan.md
   - IaC and Phase 7: iac.md
 
 markdown_extensions:
