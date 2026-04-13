@@ -41,8 +41,26 @@ TOOL_SERVER_AUDIT_INGEST_TOKEN="${TOOL_SERVER_AUDIT_INGEST_TOKEN}" \
 echo "Preparing Vault audit log path permissions..."
 "${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" exec -T -u root vault sh -c 'mkdir -p /vault/logs && touch /vault/logs/audit.log && chown vault:vault /vault/logs /vault/logs/audit.log && chmod 0700 /vault/logs && chmod 0600 /vault/logs/audit.log' || true
 
+echo "Waiting for Vault API readiness..."
+for attempt in $(seq 1 30); do
+	if curl -fsS --max-time 2 "http://127.0.0.1:8200/v1/sys/health" >/dev/null 2>&1; then
+		break
+	fi
+	if [[ "$attempt" -eq 30 ]]; then
+		echo "Vault did not become ready in time"
+		exit 1
+	fi
+	sleep 2
+done
+
 echo "Configuring Vault baseline for dynamic/auditable secrets..."
 "$ROOT_DIR/scripts/vault-bootstrap.sh"
+
+if [[ -z "${KEYCLOAK_OPENWEBUI_CLIENT_SECRET:-}" ]]; then
+	KEYCLOAK_OPENWEBUI_CLIENT_SECRET="$(head -c 32 /dev/urandom | base64 | tr -d '=+/\n' | cut -c1-32)"
+	export KEYCLOAK_OPENWEBUI_CLIENT_SECRET
+	echo "Generated runtime Keycloak Open WebUI client secret"
+fi
 
 echo "Issuing scoped tool-server runtime token from Vault..."
 TOOL_SERVER_VAULT_TOKEN_RUNTIME="$($ROOT_DIR/scripts/issue-tool-server-token.sh)"

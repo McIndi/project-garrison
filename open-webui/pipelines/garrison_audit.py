@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -71,6 +72,9 @@ class Pipeline:
         }
 
     def _authorize_orchestration(self, user: dict[str, Any] | None) -> dict[str, Any]:
+        # NOTE: This pipeline consumes already-decoded user claims from Open WebUI runtime.
+        # JWT signature verification is expected to happen upstream in the authentication layer.
+        # Do not expose this pipeline directly on untrusted boundaries.
         claims = self._extract_user_claims(user)
 
         if self.orchestrate_require_user_claims and (not claims["sub"] or not claims["iss"]):
@@ -115,9 +119,14 @@ class Pipeline:
             return hashlib.sha256(raw).hexdigest()
         if self.payload_mode == "redacted":
             text = raw.decode("utf-8", errors="replace")
-            for secret_key in ("authorization", "token", "password", "secret", "api_key"):
-                text = text.replace(secret_key, f"{secret_key}_redacted")
-            return text
+            redacted = re.sub(
+                r'"(authorization|token|secret_id|role_id|password|secret|api_key)"\s*:\s*"[^"]*"',
+                '"\\1":"[REDACTED]"',
+                text,
+                flags=re.IGNORECASE,
+            )
+            redacted = re.sub(r"(Bearer\s+)[^\s\"]+", r"\1[REDACTED]", redacted, flags=re.IGNORECASE)
+            return redacted
         return raw.decode("utf-8", errors="replace")
 
     def _emit_event(self, stage: str, body: dict[str, Any], user: dict[str, Any] | None = None) -> None:

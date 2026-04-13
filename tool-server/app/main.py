@@ -1,6 +1,8 @@
+import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import replace
 import hashlib
+import hmac
 import ipaddress
 import json
 import re
@@ -178,8 +180,17 @@ async def audit_http_request(request, call_next):
             try:
                 client = provisioning._mongo_client()
                 client["garrison_audit"]["llm"].insert_one(event)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    json.dumps(
+                        {
+                            "type": "audit_persist_error",
+                            "trace_id": trace_id,
+                            "error": str(exc),
+                            "timestamp": storage.utc_now_iso(),
+                        }
+                    )
+                )
 
         try:
             await _emit_otel_log(event)
@@ -202,7 +213,7 @@ async def ingest_audit_events(source: str, request: Request, x_audit_ingest_toke
     if not settings.audit_ingest_token:
         raise HTTPException(status_code=503, detail="Audit ingest token is not configured")
 
-    if x_audit_ingest_token != settings.audit_ingest_token:
+    if not x_audit_ingest_token or not hmac.compare_digest(x_audit_ingest_token, settings.audit_ingest_token):
         raise HTTPException(status_code=403, detail="Invalid audit ingest token")
 
     if source not in {"vault", "nginx"}:
@@ -407,7 +418,7 @@ async def _spawn_with_auth(body: SpawnRequest, auth: AuthContext) -> dict:
         "vault_secret_id": creds.secret_id,
     }
     last_error = ""
-    for _ in range(3):
+    for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.post(f"{settings.beeai_url}/spawn", json=payload)
@@ -432,6 +443,8 @@ async def _spawn_with_auth(body: SpawnRequest, auth: AuthContext) -> dict:
             last_error = resp.text
         except Exception as exc:  # noqa: BLE001
             last_error = str(exc)
+        if attempt < 2:
+            await asyncio.sleep(0.2 * (2**attempt))
     raise HTTPException(status_code=503, detail=f"Spawn failed after retries: {last_error}")
 
 
@@ -594,10 +607,13 @@ async def decrypt(body: TransitDecryptRequest, _: AuthContext = Depends(require_
 
 @app.post("/tools/search", response_model=SearchResponse)
 async def search(body: SearchRequest, _: AuthContext = Depends(require_auth_context)) -> SearchResponse:
+    corpus = body.corpus or settings.search_default_corpus
+    if corpus not in settings.search_allowed_corpora:
+        raise HTTPException(status_code=403, detail="Requested corpus is not allowed")
+
     if settings.use_inmemory:
         return SearchResponse(results=[])
 
-    corpus = body.corpus or settings.search_default_corpus
     db_name, coll_name = _parse_corpus(corpus)
     query = body.query.strip()
 

@@ -398,3 +398,23 @@ def test_authorization_all_mode_allows_when_both_match() -> None:
     claims = pipeline._authorize_orchestration(user)
 
     assert claims["sub"] == "user-902"
+
+
+def test_payload_repr_redacted_masks_values() -> None:
+    pipeline = Pipeline()
+    pipeline.payload_mode = "redacted"
+
+    rendered = pipeline._payload_repr(
+        {
+            "authorization": "Bearer super-secret",
+            "password": "hunter2",
+            "token": "abc123",
+            "safe": "ok",
+        }
+    )
+
+    assert '"authorization":"[REDACTED]"' in rendered
+    assert '"password":"[REDACTED]"' in rendered
+    assert '"token":"[REDACTED]"' in rendered
+    assert "super-secret" not in rendered
+    assert "hunter2" not in rendered

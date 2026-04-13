@@ -21,8 +21,12 @@ api_get_root() {
 api_post_root() {
   local path="$1"
   local payload="$2"
+  local payload_file
+  payload_file="$(mktemp /tmp/garrison-vault-policy-post.XXXXXX.json)"
+  printf '%s' "${payload}" >"${payload_file}"
   curl -fsS -X POST -H "X-Vault-Token: ${VAULT_TOKEN}" -H "Content-Type: application/json" \
-    -d "${payload}" "${VAULT_ADDR}${path}"
+    --data-binary "@${payload_file}" "${VAULT_ADDR}${path}"
+  rm -f "${payload_file}"
 }
 
 lookup_policies_json() {
@@ -32,7 +36,7 @@ lookup_policies_json() {
 
 spawn_role_token() {
   local role="$1"
-  local role_id_json secret_id_json role_id secret_id login_json token
+  local role_id_json secret_id_json role_id secret_id login_json token login_payload_file
 
   role_id_json="$(api_get_root "/v1/auth/approle/role/${role}/role-id")"
   role_id="$(echo "${role_id_json}" | sed -n 's/.*"role_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
@@ -42,9 +46,12 @@ spawn_role_token() {
   secret_id="$(echo "${secret_id_json}" | sed -n 's/.*"secret_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
   [[ -n "${secret_id}" ]] || fail "Failed to parse secret_id for ${role}"
 
+  login_payload_file="$(mktemp /tmp/garrison-vault-login.XXXXXX.json)"
+  printf '{"role_id":"%s","secret_id":"%s"}' "${role_id}" "${secret_id}" >"${login_payload_file}"
   login_json="$(curl -fsS -X POST -H "Content-Type: application/json" \
-    -d "{\"role_id\":\"${role_id}\",\"secret_id\":\"${secret_id}\"}" \
+    --data-binary "@${login_payload_file}" \
     "${VAULT_ADDR}/v1/auth/approle/login")"
+  rm -f "${login_payload_file}"
   token="$(echo "${login_json}" | sed -n 's/.*"client_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
   [[ -n "${token}" ]] || fail "Failed to parse client token for ${role}"
 

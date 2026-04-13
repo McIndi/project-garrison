@@ -71,6 +71,43 @@ def test_spawn_depth_limit_enforced() -> None:
     assert resp.status_code == 403
 
 
+def test_spawn_retries_with_backoff(monkeypatch) -> None:
+    async def fake_issue_spawn_credentials(_: str):
+        class Creds:
+            role_id = "role-id"
+            secret_id = "secret-id"
+            token_accessor = "acc-123"
+
+        return Creds()
+
+    class DummyClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, _url, json):
+            raise RuntimeError("beeai unavailable")
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("app.main.provisioning.issue_spawn_credentials", fake_issue_spawn_credentials)
+    monkeypatch.setattr("app.main.httpx.AsyncClient", lambda timeout: DummyClient())
+    monkeypatch.setattr("app.main.asyncio.sleep", fake_sleep)
+
+    resp = client.post(
+        "/tools/spawn",
+        headers=BASE_HEADERS,
+        json={"agent_class": "rag", "task_context": "ctx", "memory_keys": []},
+    )
+    assert resp.status_code == 503
+    assert sleeps == [0.2, 0.4]
+
+
 def test_nested_spawn_requires_root_orchestrator_header() -> None:
     headers = dict(BASE_HEADERS)
     headers["x-spawn-depth"] = "1"
@@ -626,6 +663,24 @@ def test_search_inmemory_returns_empty() -> None:
     )
     assert resp.status_code == 200
     assert resp.json()["results"] == []
+
+
+def test_search_rejects_disallowed_corpus() -> None:
+    resp = client.post(
+        "/tools/search",
+        headers=BASE_HEADERS,
+        json={"query": "garrison", "corpus": "admin.system.users", "top_k": 5},
+    )
+    assert resp.status_code == 403
+
+
+def test_search_rejects_whitespace_query() -> None:
+    resp = client.post(
+        "/tools/search",
+        headers=BASE_HEADERS,
+        json={"query": "   ", "corpus": "shared_artifacts.objects", "top_k": 5},
+    )
+    assert resp.status_code == 422
 
 
 def test_audit_payload_hash_mode(monkeypatch) -> None:

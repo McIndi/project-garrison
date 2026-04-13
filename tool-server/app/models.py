@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class MemoryWriteRequest(BaseModel):
@@ -92,6 +92,13 @@ class SearchRequest(BaseModel):
     query: str = Field(min_length=1)
     corpus: str = Field(default="shared_artifacts.objects", min_length=1)
     top_k: int = Field(default=5, ge=1, le=50)
+
+    @field_validator("query")
+    @classmethod
+    def query_cannot_be_whitespace(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("query cannot be blank or whitespace-only")
+        return value
 
 
 class SearchResult(BaseModel):

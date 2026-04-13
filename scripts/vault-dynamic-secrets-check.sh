@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
 VAULT_TOKEN="${VAULT_TOKEN:-root}"
+
+TMP_FILES=()
+cleanup() {
+  if [[ ${#TMP_FILES[@]} -gt 0 ]]; then
+    rm -f "${TMP_FILES[@]}"
+  fi
+}
+trap cleanup EXIT
 
 fail() {
   echo "[FAIL] $1"
@@ -44,7 +53,10 @@ extract_json_number() {
 assert_lease_revoked() {
   local lease_id="$1"
   local status
-  status="$(curl -sS -o /tmp/garrison-lease-lookup.json -w "%{http_code}" \
+  local lookup_file
+  lookup_file="$(mktemp /tmp/garrison-lease-lookup.XXXXXX.json)"
+  TMP_FILES+=("${lookup_file}")
+  status="$(curl -sS -o "${lookup_file}" -w "%{http_code}" \
     -X PUT -H "X-Vault-Token: ${VAULT_TOKEN}" -H "Content-Type: application/json" \
     -d "{\"lease_id\":\"${lease_id}\"}" "${VAULT_ADDR}/v1/sys/leases/lookup")"
 
@@ -93,7 +105,8 @@ api_get_creds() {
   local status
   local body_file
 
-  body_file="/tmp/garrison-creds-${role}.json"
+  body_file="$(mktemp "/tmp/garrison-creds-${role}.XXXXXX.json")"
+  TMP_FILES+=("${body_file}")
   status="$(curl -sS -o "${body_file}" -w "%{http_code}" -H "X-Vault-Token: ${VAULT_TOKEN}" \
     "${VAULT_ADDR}/v1/database/creds/${role}")"
 
