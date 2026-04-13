@@ -182,7 +182,10 @@ async def health() -> dict[str, str]:
 
 @app.post("/internal/audit/ingest/{source}")
 async def ingest_audit_events(source: str, request: Request, x_audit_ingest_token: str | None = Header(default=None)) -> dict[str, int]:
-    if settings.audit_ingest_token and x_audit_ingest_token != settings.audit_ingest_token:
+    if not settings.audit_ingest_token:
+        raise HTTPException(status_code=503, detail="Audit ingest token is not configured")
+
+    if x_audit_ingest_token != settings.audit_ingest_token:
         raise HTTPException(status_code=403, detail="Invalid audit ingest token")
 
     if source not in {"vault", "nginx"}:

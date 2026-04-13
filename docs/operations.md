@@ -12,6 +12,7 @@ Bootstrap includes:
 
 - Compose up and image build.
 - Vault baseline config.
+- Runtime audit ingest token generation and injection for Fluent Bit/tool-server.
 - Open WebUI scoped orchestrate token issuance from Vault and Open WebUI startup with injected token.
 - Vault readiness checks.
 - Vault policy matrix checks.
@@ -38,6 +39,12 @@ Issue only the Open WebUI orchestrate service token:
 
 ```bash
 bash scripts/issue-openwebui-token.sh
+```
+
+Issue only the runtime audit ingest token:
+
+```bash
+bash scripts/issue-audit-ingest-token.sh
 ```
 
 Optional environment knobs:

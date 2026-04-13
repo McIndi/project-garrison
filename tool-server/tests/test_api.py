@@ -631,6 +631,17 @@ def test_audit_ingest_rejects_missing_or_bad_token(monkeypatch) -> None:
     assert wrong.status_code == 403
 
 
+def test_audit_ingest_rejects_when_server_token_not_configured(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.settings.audit_ingest_token", "")
+
+    resp = client.post(
+        "/internal/audit/ingest/vault",
+        headers={"x-audit-ingest-token": "anything"},
+        data='{"msg":"x"}',
+    )
+    assert resp.status_code == 503
+
+
 def test_audit_ingest_rejects_unknown_source(monkeypatch) -> None:
     monkeypatch.setattr("app.main.settings.audit_ingest_token", "expected-token")
 

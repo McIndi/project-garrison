@@ -23,8 +23,19 @@ else
 	exit 1
 fi
 
+if [[ -z "${TOOL_SERVER_AUDIT_INGEST_TOKEN:-}" ]]; then
+	echo "Issuing runtime audit ingest token..."
+	TOOL_SERVER_AUDIT_INGEST_TOKEN="$("$ROOT_DIR/scripts/issue-audit-ingest-token.sh")"
+	if [[ -z "${TOOL_SERVER_AUDIT_INGEST_TOKEN}" ]]; then
+		echo "Failed to generate audit ingest token"
+		exit 1
+	fi
+	export TOOL_SERVER_AUDIT_INGEST_TOKEN
+fi
+
 echo "Starting core stack..."
-"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d --build \
+TOOL_SERVER_AUDIT_INGEST_TOKEN="${TOOL_SERVER_AUDIT_INGEST_TOKEN}" \
+	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d --build \
 	valkey mongo vault beeai-runtime nginx fluent-bit otel-collector tool-server keycloak
 
 echo "Configuring Vault baseline for dynamic/auditable secrets..."
@@ -38,7 +49,8 @@ if [[ -z "${OPENWEBUI_ORCH_TOKEN}" ]]; then
 fi
 
 echo "Starting Open WebUI with runtime-scoped orchestrate token..."
-GARRISON_ORCHESTRATE_BEARER_TOKEN="${OPENWEBUI_ORCH_TOKEN}" \
+TOOL_SERVER_AUDIT_INGEST_TOKEN="${TOOL_SERVER_AUDIT_INGEST_TOKEN}" \
+	GARRISON_ORCHESTRATE_BEARER_TOKEN="${OPENWEBUI_ORCH_TOKEN}" \
 	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d open-webui
 
 echo "Running Vault readiness checks..."
