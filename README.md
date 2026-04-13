@@ -48,7 +48,7 @@ flowchart LR
 
 Notes about accuracy:
 
-- Keycloak is deployed in compose, but Open WebUI local config currently has WEBUI_AUTH set to False.
+- Keycloak is deployed in compose, and Open WebUI auth is enabled by default (OIDC wiring remains the next hardening increment).
 - OTel collector local config currently exports to debug.
 - tool-server now emits audit events as OTLP logs to the collector endpoint.
 - Open WebUI garrison_audit pipeline now emits inlet/outlet OTLP logs to the collector endpoint.

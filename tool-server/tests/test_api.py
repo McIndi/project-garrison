@@ -326,7 +326,14 @@ def test_registry_requires_token_lookup_when_enabled(monkeypatch) -> None:
 
     async def fake_lookup(_: str):
         called["value"] = True
-        return {"data": {"id": "tok"}}
+        return {
+            "data": {
+                "id": "tok",
+                "display_name": "token",
+                "policies": ["default", "garrison-base", "garrison-orchestrator"],
+                "meta": {"agent_id": "agent-root"},
+            }
+        }
 
     monkeypatch.setattr("app.security.settings.require_token_lookup", True)
     monkeypatch.setattr("app.security._lookup_vault_token", fake_lookup)
@@ -334,6 +341,13 @@ def test_registry_requires_token_lookup_when_enabled(monkeypatch) -> None:
     resp = client.get("/tools/registry", headers=BASE_HEADERS)
     assert resp.status_code == 200
     assert called["value"] is True
+
+
+def test_security_defaults_disable_identity_fallbacks() -> None:
+    from app.config import settings
+
+    assert settings.allow_header_identity_fallback is False
+    assert settings.allow_root_token_fallback is False
 
 
 def test_registry_rejects_when_token_lookup_fails(monkeypatch) -> None:

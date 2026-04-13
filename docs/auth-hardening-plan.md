@@ -49,6 +49,35 @@ This audit covers:
 8. Development defaults use known admin credentials for Keycloak and Vault dev root token.
 - Impact: acceptable for local dev bootstrap, but must be blocked in shared/non-local environments.
 
+## Vault and Keycloak Coverage Check (Against SPEC)
+
+This section maps current plan coverage to SPEC-intended use.
+
+### Vault intended responsibilities and plan coverage
+
+Covered in this plan:
+- Agent/service auth via AppRole and scoped tokens.
+- Strict token lookup and identity claim enforcement at tool-server.
+- Removal of root/static runtime token usage.
+
+Not yet explicit enough (added below in phases):
+- Enforce token metadata stamping (`agent_id`, `agent_class`) at issuance and validate in runtime checks.
+- Use Vault dynamic credentials for data-plane access by services (remove static Mongo/Valkey root credentials from runtime paths).
+- Register and verify both Vault audit devices expected by SPEC (`file` and `syslog`).
+- Add Vault PKI-based service-to-service mTLS path for secure profile (tool-server <-> BeeAI runtime first).
+
+### Keycloak intended responsibilities and plan coverage
+
+Covered in this plan:
+- Open WebUI OIDC integration.
+- Role/group authorization to gate orchestration.
+
+Not yet explicit enough (added below in phases):
+- Enforce issuer/audience/expiry validation for Keycloak tokens at Open WebUI boundary.
+- Define deterministic claim mapping (subject, email, groups/roles) into orchestration metadata.
+- Configure session, refresh-token, and client secret rotation policy for secure profile.
+- Remove default admin credentials from secure profile and bootstrap from generated/admin-secret flow.
+
 ## Authn/Authz Target State
 
 1. Human identity: Open WebUI authentication enabled and federated via Keycloak OIDC.
@@ -99,6 +128,14 @@ Exit criteria:
 - Replace static ingest token literal with generated secret per bootstrap.
 - Pass token to Fluent Bit and tool-server via runtime secret/env injection.
 
+4. Enforce Vault token metadata contract.
+- Ensure AppRole/token issuance includes immutable metadata fields: `agent_id`, `agent_class`, `issued_for`.
+- Make strict claim checks fail closed if metadata is absent or mismatched.
+
+5. Replace static service datastore credentials.
+- Move tool-server runtime access for MongoDB/Valkey to Vault dynamic credentials path.
+- Keep bootstrap-only admin credentials isolated from steady-state runtime services.
+
 Exit criteria:
 - No root token in Open WebUI orchestrate path.
 - Orchestrate requests succeed only with dedicated scoped service token.
@@ -118,6 +155,11 @@ Exit criteria:
 - Define who can trigger orchestration (role/group-based).
 - Reject orchestration for unauthorised human roles before calling tool-server.
 
+4. Harden OIDC token validation and session controls.
+- Validate issuer, audience, signature, expiry, and nonce/state semantics.
+- Define secure profile session timeout, refresh token TTL, and re-auth requirements.
+- Add client secret rotation runbook for Open WebUI OIDC client.
+
 Exit criteria:
 - Open WebUI authenticates users through Keycloak.
 - Audit chain links human principal -> orchestration call -> spawned work.
@@ -135,6 +177,10 @@ Exit criteria:
 3. Gate insecure defaults in CI.
 - Fail if secure profile contains root/static demo credentials.
 
+4. Add Vault audit + PKI hardening gates.
+- Verify both Vault audit devices (`file` and `syslog`) are configured in secure profile.
+- Add phased mTLS rollout using Vault PKI for service-to-service control paths.
+
 Exit criteria:
 - Control plane endpoints require authentication.
 - Secure profile is default for CI.
@@ -147,6 +193,11 @@ Exit criteria:
 4. tool-server integration test: requests fail when token claims missing and fallback disabled.
 5. Negative test: root token cannot bypass identity binding when fallback disabled.
 6. Network test: tool-server not reachable from host in secure profile.
+7. Vault token metadata contract test: token missing `agent_id`/`agent_class` is rejected.
+8. Vault dynamic credential test: runtime service credentials rotate and expire as expected.
+9. Vault audit device test: both `file` and `syslog` devices enabled in secure profile.
+10. Keycloak OIDC validation test: bad issuer/audience/expired token rejected.
+11. Keycloak RBAC test: unauthorized human role cannot invoke orchestration.
 
 ## Recommended Execution Order
 

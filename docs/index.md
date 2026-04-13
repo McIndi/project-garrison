@@ -43,6 +43,6 @@ The smoke path validates:
 
 ## Current Scope Boundaries
 
-- Keycloak is deployed in compose but Open WebUI local auth is disabled.
+- Open WebUI auth is enabled; full Keycloak OIDC role mapping and policy enforcement are the next increment.
 - OTel currently exports to debug in collector config.
 - OTLP logs are emitted by both tool-server and Open WebUI pipeline in local mode.

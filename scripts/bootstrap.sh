@@ -5,6 +5,15 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 cd "$ROOT_DIR"
 
+if grep -Eiq 'WEBUI_AUTH:\s*"?False"?' "$ROOT_DIR/compose.yaml"; then
+	if [[ "${ALLOW_INSECURE_WEBUI_AUTH:-false}" != "true" ]]; then
+		echo "Refusing to bootstrap: WEBUI_AUTH is disabled in compose.yaml"
+		echo "Set ALLOW_INSECURE_WEBUI_AUTH=true to bypass this check for local troubleshooting."
+		exit 1
+	fi
+	echo "[WARN] Proceeding with insecure Open WebUI auth because ALLOW_INSECURE_WEBUI_AUTH=true"
+fi
+
 if command -v docker >/dev/null 2>&1; then
 	COMPOSE_CMD=(docker compose)
 elif command -v podman >/dev/null 2>&1; then
