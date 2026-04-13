@@ -70,3 +70,4 @@ sequenceDiagram
 - If spawn depth exceeds configured max depth, request returns 403.
 - Open WebUI pipeline orchestration errors are non-fatal to the UI request and captured in metadata.
 - Open WebUI pipeline blocks orchestration for users missing required role/group claims.
+- Open WebUI pipeline blocks orchestration when OIDC issuer/audience/expiry claim validation fails.

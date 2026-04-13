@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from datetime import UTC, datetime
 from uuid import uuid4
 from typing import Any
@@ -27,6 +28,10 @@ class Pipeline:
         self.orchestrate_required_roles = self._csv_env("GARRISON_ORCHESTRATE_REQUIRED_ROLES")
         self.orchestrate_required_groups = self._csv_env("GARRISON_ORCHESTRATE_REQUIRED_GROUPS")
         self.orchestrate_require_user_claims = os.getenv("GARRISON_ORCHESTRATE_REQUIRE_USER_CLAIMS", "true").lower() == "true"
+        self.oidc_required_issuer = os.getenv("GARRISON_OIDC_REQUIRED_ISSUER", "").strip()
+        self.oidc_required_audience = os.getenv("GARRISON_OIDC_REQUIRED_AUDIENCE", "").strip()
+        self.oidc_require_exp = os.getenv("GARRISON_OIDC_REQUIRE_EXP", "true").lower() == "true"
+        self.oidc_clock_skew_seconds = int(os.getenv("GARRISON_OIDC_CLOCK_SKEW_SECONDS", "60"))
         self.otel_enabled = os.getenv("GARRISON_OTEL_ENABLED", "true").lower() == "true"
         self.otel_logs_endpoint = os.getenv("GARRISON_OTEL_LOGS_ENDPOINT", "http://otel-collector:4318/v1/logs")
         self.otel_timeout_seconds = float(os.getenv("GARRISON_OTEL_TIMEOUT_SECONDS", "2"))
@@ -58,6 +63,8 @@ class Pipeline:
         return {
             "sub": user_obj.get("sub") or user_obj.get("user_id") or user_obj.get("id"),
             "iss": user_obj.get("iss") or user_obj.get("issuer"),
+            "aud": sorted(self._as_claim_set(user_obj.get("aud") or user_obj.get("audience"))),
+            "exp": user_obj.get("exp"),
             "roles": sorted(roles),
             "groups": sorted(groups),
         }
@@ -67,6 +74,23 @@ class Pipeline:
 
         if self.orchestrate_require_user_claims and (not claims["sub"] or not claims["iss"]):
             raise PermissionError("Missing required user identity claims (sub/iss)")
+
+        if self.oidc_required_issuer and claims["iss"] != self.oidc_required_issuer:
+            raise PermissionError("User token issuer is not authorized")
+
+        if self.oidc_required_audience and self.oidc_required_audience not in set(claims["aud"]):
+            raise PermissionError("User token audience is not authorized")
+
+        if self.oidc_require_exp:
+            if claims["exp"] is None:
+                raise PermissionError("User token is missing exp claim")
+            try:
+                exp_value = int(claims["exp"])
+            except (TypeError, ValueError) as exc:
+                raise PermissionError("User token exp claim is invalid") from exc
+            now = int(time.time())
+            if exp_value + self.oidc_clock_skew_seconds < now:
+                raise PermissionError("User token is expired")
 
         role_match = not self.orchestrate_required_roles or bool(set(claims["roles"]) & self.orchestrate_required_roles)
         group_match = not self.orchestrate_required_groups or bool(set(claims["groups"]) & self.orchestrate_required_groups)
@@ -236,6 +260,7 @@ class Pipeline:
         claims = self._extract_user_claims(user)
         body["metadata"]["user_sub"] = claims["sub"] or ""
         body["metadata"]["user_issuer"] = claims["iss"] or ""
+        body["metadata"]["user_audience"] = claims["aud"]
         body["metadata"]["user_roles"] = claims["roles"]
         body["metadata"]["user_groups"] = claims["groups"]
 

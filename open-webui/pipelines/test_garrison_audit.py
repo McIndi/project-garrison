@@ -1,6 +1,7 @@
 import asyncio
 import importlib.util
 import os
+import time
 from pathlib import Path
 
 os.environ["GARRISON_ORCHESTRATE_BEARER_TOKEN"] = "test-orchestrate-token"
@@ -37,6 +38,9 @@ def test_inlet_calls_orchestrate_and_sets_metadata(monkeypatch) -> None:
     pipeline.orchestrate_required_roles = set()
     pipeline.orchestrate_required_groups = set()
     pipeline.orchestrate_require_user_claims = False
+    pipeline.oidc_required_issuer = ""
+    pipeline.oidc_required_audience = ""
+    pipeline.oidc_require_exp = False
     captured = {}
 
     async def fake_post(url, headers, json):
@@ -84,6 +88,9 @@ def test_inlet_orchestrate_failure_is_non_fatal(monkeypatch) -> None:
     pipeline.orchestrate_required_roles = set()
     pipeline.orchestrate_required_groups = set()
     pipeline.orchestrate_require_user_claims = False
+    pipeline.oidc_required_issuer = ""
+    pipeline.oidc_required_audience = ""
+    pipeline.oidc_require_exp = False
 
     async def fake_post(url, headers, json):
         raise RuntimeError("network down")
@@ -140,6 +147,8 @@ def test_inlet_propagates_user_identity_claims(monkeypatch) -> None:
         "session_id": "human-sess-claims",
         "sub": "user-123",
         "iss": "https://keycloak.local/realms/garrison",
+        "aud": ["open-webui"],
+        "exp": int(time.time()) + 3600,
         "roles": ["garrison-orchestrator"],
         "groups": ["garrison-orchestrators"],
     }
@@ -147,6 +156,7 @@ def test_inlet_propagates_user_identity_claims(monkeypatch) -> None:
 
     assert result["metadata"]["user_sub"] == "user-123"
     assert result["metadata"]["user_issuer"] == "https://keycloak.local/realms/garrison"
+    assert result["metadata"]["user_audience"] == ["open-webui"]
     assert result["metadata"]["user_roles"] == ["garrison-orchestrator"]
     assert result["metadata"]["user_groups"] == ["garrison-orchestrators"]
 
@@ -187,6 +197,9 @@ def test_inlet_sets_orchestration_error_when_user_not_authorized(monkeypatch) ->
     pipeline.orchestrate_required_roles = {"garrison-orchestrator"}
     pipeline.orchestrate_required_groups = {"garrison-orchestrators"}
     pipeline.orchestrate_require_user_claims = True
+    pipeline.oidc_required_issuer = ""
+    pipeline.oidc_required_audience = ""
+    pipeline.oidc_require_exp = False
 
     async def fake_emit(stage, body, user):
         return None
@@ -212,6 +225,9 @@ def test_inlet_sets_orchestration_error_when_required_claims_missing(monkeypatch
     pipeline.orchestrate_required_roles = set()
     pipeline.orchestrate_required_groups = set()
     pipeline.orchestrate_require_user_claims = True
+    pipeline.oidc_required_issuer = ""
+    pipeline.oidc_required_audience = ""
+    pipeline.oidc_require_exp = False
 
     async def fake_emit(stage, body, user):
         return None
@@ -227,3 +243,91 @@ def test_inlet_sets_orchestration_error_when_required_claims_missing(monkeypatch
 
     assert "garrison_orchestration_error" in result["metadata"]
     assert "sub/iss" in result["metadata"]["garrison_orchestration_error"]
+
+
+def test_inlet_sets_orchestration_error_when_issuer_invalid(monkeypatch) -> None:
+    pipeline = Pipeline()
+    pipeline.orchestrate_required_roles = set()
+    pipeline.orchestrate_required_groups = set()
+    pipeline.orchestrate_require_user_claims = True
+    pipeline.oidc_required_issuer = "https://keycloak.local/realms/garrison"
+    pipeline.oidc_required_audience = ""
+    pipeline.oidc_require_exp = False
+
+    async def fake_emit(stage, body, user):
+        return None
+
+    monkeypatch.setattr(pipeline, "_emit_otel_log", fake_emit)
+
+    body = {"messages": [{"role": "user", "content": "run task"}], "metadata": {}}
+    user = {
+        "session_id": "human-sess-8",
+        "sub": "user-789",
+        "iss": "https://other-issuer/realm",
+        "roles": ["garrison-orchestrator"],
+        "aud": ["open-webui"],
+        "exp": int(time.time()) + 3600,
+    }
+    result = asyncio.run(pipeline.inlet(body, user))
+
+    assert "garrison_orchestration_error" in result["metadata"]
+    assert "issuer" in result["metadata"]["garrison_orchestration_error"]
+
+
+def test_inlet_sets_orchestration_error_when_audience_invalid(monkeypatch) -> None:
+    pipeline = Pipeline()
+    pipeline.orchestrate_required_roles = set()
+    pipeline.orchestrate_required_groups = set()
+    pipeline.orchestrate_require_user_claims = True
+    pipeline.oidc_required_issuer = ""
+    pipeline.oidc_required_audience = "open-webui"
+    pipeline.oidc_require_exp = False
+
+    async def fake_emit(stage, body, user):
+        return None
+
+    monkeypatch.setattr(pipeline, "_emit_otel_log", fake_emit)
+
+    body = {"messages": [{"role": "user", "content": "run task"}], "metadata": {}}
+    user = {
+        "session_id": "human-sess-9",
+        "sub": "user-790",
+        "iss": "https://keycloak.local/realms/garrison",
+        "roles": ["garrison-orchestrator"],
+        "aud": ["other-client"],
+        "exp": int(time.time()) + 3600,
+    }
+    result = asyncio.run(pipeline.inlet(body, user))
+
+    assert "garrison_orchestration_error" in result["metadata"]
+    assert "audience" in result["metadata"]["garrison_orchestration_error"]
+
+
+def test_inlet_sets_orchestration_error_when_token_expired(monkeypatch) -> None:
+    pipeline = Pipeline()
+    pipeline.orchestrate_required_roles = set()
+    pipeline.orchestrate_required_groups = set()
+    pipeline.orchestrate_require_user_claims = True
+    pipeline.oidc_required_issuer = ""
+    pipeline.oidc_required_audience = ""
+    pipeline.oidc_require_exp = True
+    pipeline.oidc_clock_skew_seconds = 0
+
+    async def fake_emit(stage, body, user):
+        return None
+
+    monkeypatch.setattr(pipeline, "_emit_otel_log", fake_emit)
+
+    body = {"messages": [{"role": "user", "content": "run task"}], "metadata": {}}
+    user = {
+        "session_id": "human-sess-10",
+        "sub": "user-791",
+        "iss": "https://keycloak.local/realms/garrison",
+        "roles": ["garrison-orchestrator"],
+        "aud": ["open-webui"],
+        "exp": int(time.time()) - 5,
+    }
+    result = asyncio.run(pipeline.inlet(body, user))
+
+    assert "garrison_orchestration_error" in result["metadata"]
+    assert "expired" in result["metadata"]["garrison_orchestration_error"]

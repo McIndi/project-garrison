@@ -105,6 +105,10 @@ services:
       GARRISON_ORCHESTRATE_REQUIRED_ROLES: garrison-orchestrator
       GARRISON_ORCHESTRATE_REQUIRED_GROUPS: garrison-orchestrators
       GARRISON_ORCHESTRATE_REQUIRE_USER_CLAIMS: "true"
+      GARRISON_OIDC_REQUIRED_ISSUER: http://keycloak:8080/realms/garrison
+      GARRISON_OIDC_REQUIRED_AUDIENCE: open-webui
+      GARRISON_OIDC_REQUIRE_EXP: "true"
+      GARRISON_OIDC_CLOCK_SKEW_SECONDS: "60"
     volumes:
       - ./open-webui/pipelines:/app/pipelines:ro
     ports:
