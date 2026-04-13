@@ -600,3 +600,70 @@ def test_audit_payload_redacted_mode(monkeypatch) -> None:
     )
     assert resp.status_code == 200
     assert "[REDACTED]" in captured["message"]
+
+
+def test_audit_ingest_rejects_missing_or_bad_token(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.settings.audit_ingest_token", "expected-token")
+
+    missing = client.post("/internal/audit/ingest/vault", data='{"msg":"x"}')
+    assert missing.status_code == 403
+
+    wrong = client.post(
+        "/internal/audit/ingest/vault",
+        headers={"x-audit-ingest-token": "wrong-token"},
+        data='{"msg":"x"}',
+    )
+    assert wrong.status_code == 403
+
+
+def test_audit_ingest_rejects_unknown_source(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.settings.audit_ingest_token", "expected-token")
+
+    resp = client.post(
+        "/internal/audit/ingest/unknown",
+        headers={"x-audit-ingest-token": "expected-token"},
+        data='{"msg":"x"}',
+    )
+    assert resp.status_code == 400
+
+
+def test_audit_ingest_parses_json_lines_and_persists(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.settings.audit_ingest_token", "expected-token")
+    monkeypatch.setattr("app.main.settings.use_inmemory", False)
+
+    captured = {"docs": []}
+
+    class FakeCollection:
+        def insert_many(self, docs):
+            captured["docs"] = docs
+
+    class FakeDatabase:
+        def __getitem__(self, _name):
+            return FakeCollection()
+
+    class FakeMongo:
+        def __getitem__(self, _name):
+            return FakeDatabase()
+
+    monkeypatch.setattr("app.main.provisioning._mongo_client", lambda: FakeMongo())
+
+    payload = "\n".join(
+        [
+            '{"log":"{\\"event\\":\\"vault\\"}"}',
+            '{"log":"plain text line"}',
+            "raw line fallback",
+        ]
+    )
+    resp = client.post(
+        "/internal/audit/ingest/vault",
+        headers={"x-audit-ingest-token": "expected-token", "content-type": "text/plain"},
+        data=payload,
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["ingested"] == 3
+    assert len(captured["docs"]) == 3
+    assert captured["docs"][0]["source"] == "vault"
+    assert captured["docs"][0]["parsed_log"] == {"event": "vault"}
+    assert captured["docs"][1]["parsed_log"] is None
+    assert captured["docs"][2]["record"] == {"log": "raw line fallback"}
