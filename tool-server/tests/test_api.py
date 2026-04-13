@@ -5,6 +5,8 @@ import json
 os.environ["TOOL_SERVER_INMEMORY"] = "true"
 os.environ["TOOL_SERVER_REQUIRE_TOKEN_LOOKUP"] = "false"
 os.environ["TOOL_SERVER_SPAWN_MAX_DEPTH"] = "2"
+os.environ["TOOL_SERVER_FETCH_PROXY_URL"] = "http://proxy.local:8088"
+os.environ["TOOL_SERVER_FETCH_REQUIRE_PROXY"] = "true"
 
 from fastapi.testclient import TestClient
 from fastapi import HTTPException
@@ -354,6 +356,8 @@ def test_fetch_rejects_invalid_scheme() -> None:
 
 
 def test_fetch_success(monkeypatch) -> None:
+    captured = {}
+
     async def fake_request(method, url, headers, content):
         class Resp:
             status_code = 200
@@ -371,16 +375,33 @@ def test_fetch_success(monkeypatch) -> None:
 
         request = staticmethod(fake_request)
 
-    monkeypatch.setattr("app.main.httpx.AsyncClient", lambda timeout, follow_redirects: DummyClient())
+    def fake_builder():
+        captured["proxy"] = "http://proxy.local:8088"
+        return DummyClient()
+
+    monkeypatch.setattr("app.main._build_fetch_client", fake_builder)
 
     resp = client.post(
         "/tools/fetch",
         headers=BASE_HEADERS,
-        json={"url": "https://example.com", "method": "GET"},
+        json={"url": "http://example.com", "method": "GET"},
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == 200
     assert resp.json()["body"] == "ok"
+    assert captured["proxy"] == "http://proxy.local:8088"
+
+
+def test_fetch_rejects_when_proxy_required_but_not_configured(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.settings.fetch_require_proxy", True)
+    monkeypatch.setattr("app.main.settings.fetch_proxy_url", "")
+
+    resp = client.post(
+        "/tools/fetch",
+        headers=BASE_HEADERS,
+        json={"url": "http://example.com", "method": "GET"},
+    )
+    assert resp.status_code == 503
 
 
 def test_handoff_write_requires_matching_agent() -> None:

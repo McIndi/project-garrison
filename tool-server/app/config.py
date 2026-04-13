@@ -14,6 +14,8 @@ class Settings:
     summarize_model = os.getenv("TOOL_SERVER_SUMMARIZE_MODEL", "phi3:mini")
     ollama_url = os.getenv("TOOL_SERVER_OLLAMA_URL", "http://ollama:11434")
     search_default_corpus = os.getenv("TOOL_SERVER_SEARCH_DEFAULT_CORPUS", "shared_artifacts.objects")
+    fetch_proxy_url = os.getenv("TOOL_SERVER_FETCH_PROXY_URL", "")
+    fetch_require_proxy = os.getenv("TOOL_SERVER_FETCH_REQUIRE_PROXY", "true").lower() == "true"
     audit_payload_mode = os.getenv("GARRISON_AUDIT_PAYLOAD_MODE", "full")
     class_token_ttl = {
         "orchestrator": "4h",

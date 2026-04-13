@@ -143,6 +143,16 @@ def _validate_fetch_url(url: str) -> None:
         raise HTTPException(status_code=400, detail="Fetch URL must include host")
 
 
+def _build_fetch_client() -> httpx.AsyncClient:
+    kwargs: dict = {
+        "timeout": 10,
+        "follow_redirects": True,
+    }
+    if settings.fetch_proxy_url:
+        kwargs["proxy"] = settings.fetch_proxy_url
+    return httpx.AsyncClient(**kwargs)
+
+
 def _extractive_summary(content: str, max_tokens: int) -> tuple[str, list[str]]:
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", content) if s.strip()]
     if not sentences:
@@ -360,10 +370,13 @@ async def fetch_url(body: FetchRequest, _: AuthContext = Depends(require_auth_co
     if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"}:
         raise HTTPException(status_code=400, detail="Unsupported HTTP method")
 
+    if settings.fetch_require_proxy and not settings.fetch_proxy_url:
+        raise HTTPException(status_code=503, detail="Fetch proxy is required but not configured")
+
     req_headers = dict(body.headers)
 
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+        async with _build_fetch_client() as client:
             resp = await client.request(
                 method=method,
                 url=body.url,

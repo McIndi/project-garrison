@@ -42,6 +42,16 @@ services:
     networks:
       - data-net
 
+  nginx:
+    image: docker.io/library/nginx:1.27-alpine
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro,Z
+      - ./logs/nginx:/var/log/nginx:Z
+    ports:
+      - "8088:8088"
+    networks:
+      - data-net
+
   otel-collector:
     image: docker.io/otel/opentelemetry-collector-contrib:0.110.0
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
@@ -93,11 +103,14 @@ services:
       TOOL_SERVER_VAULT_TOKEN: root
       TOOL_SERVER_REQUIRE_TOKEN_LOOKUP: "true"
       TOOL_SERVER_SPAWN_MAX_DEPTH: "2"
+      TOOL_SERVER_FETCH_PROXY_URL: http://nginx:8088
+      TOOL_SERVER_FETCH_REQUIRE_PROXY: "true"
     depends_on:
       - valkey
       - beeai-runtime
       - vault
       - otel-collector
+      - nginx
     ports:
       - "8080:8080"
     networks:
