@@ -17,6 +17,30 @@ class AuthContext:
     root_orchestrator_id: str
 
 
+def _infer_agent_class_from_policies(policies: list[str]) -> str | None:
+    if "garrison-orchestrator" in policies:
+        return "orchestrator"
+    if "garrison-rag" in policies:
+        return "rag"
+    if "garrison-code" in policies:
+        return "code"
+    if "garrison-base" in policies:
+        return "analyst"
+    return None
+
+
+def _lookup_identity_claims(payload: dict) -> tuple[str | None, str | None, bool]:
+    data = payload.get("data") or {}
+    meta = data.get("meta") or {}
+    display_name = str(data.get("display_name") or "")
+    policies = [str(p) for p in data.get("policies", [])]
+
+    claimed_agent_id = meta.get("agent_id")
+    claimed_agent_class = meta.get("agent_class") or _infer_agent_class_from_policies(policies)
+    is_root_token = display_name == "root" or "root" in policies
+    return claimed_agent_id, claimed_agent_class, is_root_token
+
+
 async def _lookup_vault_token(token: str) -> dict:
     url = f"{settings.vault_addr}/v1/auth/token/lookup-self"
     async with httpx.AsyncClient(timeout=5) as client:
@@ -43,11 +67,27 @@ async def require_auth_context(
     if not token:
         raise HTTPException(status_code=401, detail="Empty bearer token")
 
+    lookup_payload: dict = {}
     if settings.require_token_lookup:
-        await _lookup_vault_token(token)
+        lookup_payload = await _lookup_vault_token(token)
 
     if not x_agent_id or not x_agent_class:
         raise HTTPException(status_code=400, detail="Missing x-agent-id or x-agent-class")
+
+    if settings.require_token_lookup and settings.enforce_token_identity_binding:
+        claimed_agent_id, claimed_agent_class, is_root_token = _lookup_identity_claims(lookup_payload)
+
+        can_fallback = settings.allow_header_identity_fallback
+        if is_root_token and settings.allow_root_token_fallback:
+            can_fallback = True
+
+        if claimed_agent_id and claimed_agent_id != x_agent_id:
+            raise HTTPException(status_code=403, detail="x-agent-id does not match token identity")
+        if claimed_agent_class and claimed_agent_class != x_agent_class:
+            raise HTTPException(status_code=403, detail="x-agent-class does not match token identity")
+
+        if not claimed_agent_class and not can_fallback:
+            raise HTTPException(status_code=403, detail="Token identity claims are missing for strict binding")
 
     human_session_id = x_human_session_id or provisioning.system_session_id()
 

@@ -346,6 +346,62 @@ def test_registry_rejects_when_token_lookup_fails(monkeypatch) -> None:
     assert resp.status_code == 401
 
 
+def test_registry_rejects_agent_class_mismatch_from_token_claims(monkeypatch) -> None:
+    async def fake_lookup(_: str):
+        return {
+            "data": {
+                "display_name": "token",
+                "policies": ["default", "garrison-base", "garrison-rag"],
+                "meta": {"agent_id": "agent-root"},
+            }
+        }
+
+    monkeypatch.setattr("app.security.settings.require_token_lookup", True)
+    monkeypatch.setattr("app.security.settings.enforce_token_identity_binding", True)
+    monkeypatch.setattr("app.security._lookup_vault_token", fake_lookup)
+
+    resp = client.get("/tools/registry", headers=BASE_HEADERS)
+    assert resp.status_code == 403
+
+
+def test_registry_rejects_agent_id_mismatch_from_token_claims(monkeypatch) -> None:
+    async def fake_lookup(_: str):
+        return {
+            "data": {
+                "display_name": "token",
+                "policies": ["default", "garrison-base", "garrison-orchestrator"],
+                "meta": {"agent_id": "agent-other"},
+            }
+        }
+
+    monkeypatch.setattr("app.security.settings.require_token_lookup", True)
+    monkeypatch.setattr("app.security.settings.enforce_token_identity_binding", True)
+    monkeypatch.setattr("app.security._lookup_vault_token", fake_lookup)
+
+    resp = client.get("/tools/registry", headers=BASE_HEADERS)
+    assert resp.status_code == 403
+
+
+def test_registry_rejects_missing_claims_when_fallback_disabled(monkeypatch) -> None:
+    async def fake_lookup(_: str):
+        return {
+            "data": {
+                "display_name": "token",
+                "policies": ["default"],
+                "meta": {},
+            }
+        }
+
+    monkeypatch.setattr("app.security.settings.require_token_lookup", True)
+    monkeypatch.setattr("app.security.settings.enforce_token_identity_binding", True)
+    monkeypatch.setattr("app.security.settings.allow_header_identity_fallback", False)
+    monkeypatch.setattr("app.security.settings.allow_root_token_fallback", False)
+    monkeypatch.setattr("app.security._lookup_vault_token", fake_lookup)
+
+    resp = client.get("/tools/registry", headers=BASE_HEADERS)
+    assert resp.status_code == 403
+
+
 def test_fetch_rejects_invalid_scheme() -> None:
     resp = client.post(
         "/tools/fetch",

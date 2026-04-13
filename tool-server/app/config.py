@@ -8,6 +8,9 @@ class Settings:
     vault_addr = os.getenv("TOOL_SERVER_VAULT_ADDR", "http://localhost:8200")
     vault_token = os.getenv("TOOL_SERVER_VAULT_TOKEN", "root")
     require_token_lookup = os.getenv("TOOL_SERVER_REQUIRE_TOKEN_LOOKUP", "false").lower() == "true"
+    enforce_token_identity_binding = os.getenv("TOOL_SERVER_ENFORCE_TOKEN_IDENTITY_BINDING", "true").lower() == "true"
+    allow_header_identity_fallback = os.getenv("TOOL_SERVER_ALLOW_HEADER_IDENTITY_FALLBACK", "true").lower() == "true"
+    allow_root_token_fallback = os.getenv("TOOL_SERVER_ALLOW_ROOT_TOKEN_FALLBACK", "true").lower() == "true"
     spawn_max_depth = int(os.getenv("TOOL_SERVER_SPAWN_MAX_DEPTH", "2"))
     use_inmemory = os.getenv("TOOL_SERVER_INMEMORY", "false").lower() == "true"
     summarize_mode = os.getenv("TOOL_SERVER_SUMMARIZE_MODE", "extractive")
