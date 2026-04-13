@@ -40,7 +40,7 @@ ok "Vault transit engine enabled"
 ok "Vault database engine enabled"
 
 policies_json="$(api_list /v1/sys/policies/acl)"
-for policy in garrison-base garrison-orchestrator garrison-rag garrison-code; do
+for policy in garrison-base garrison-orchestrator garrison-rag garrison-code garrison-tool-server; do
   [[ "${policies_json}" == *"\"${policy}\""* ]] || fail "Missing ACL policy: ${policy}"
   ok "ACL policy exists: ${policy}"
 done

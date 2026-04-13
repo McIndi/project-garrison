@@ -36,13 +36,20 @@ fi
 echo "Starting core stack..."
 TOOL_SERVER_AUDIT_INGEST_TOKEN="${TOOL_SERVER_AUDIT_INGEST_TOKEN}" \
 	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d --build \
-	valkey mongo vault beeai-runtime nginx fluent-bit otel-collector tool-server keycloak
+	valkey mongo vault beeai-runtime nginx fluent-bit otel-collector keycloak
 
 echo "Preparing Vault audit log path permissions..."
 "${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" exec -T -u root vault sh -c 'mkdir -p /vault/logs && touch /vault/logs/audit.log && chown vault:vault /vault/logs /vault/logs/audit.log && chmod 0700 /vault/logs && chmod 0600 /vault/logs/audit.log' || true
 
 echo "Configuring Vault baseline for dynamic/auditable secrets..."
 "$ROOT_DIR/scripts/vault-bootstrap.sh"
+
+echo "Issuing scoped tool-server runtime token from Vault..."
+TOOL_SERVER_VAULT_TOKEN_RUNTIME="$($ROOT_DIR/scripts/issue-tool-server-token.sh)"
+if [[ -z "${TOOL_SERVER_VAULT_TOKEN_RUNTIME}" ]]; then
+	echo "Failed to obtain tool-server runtime token"
+	exit 1
+fi
 
 echo "Configuring Keycloak realm/client/role/group baseline..."
 "$ROOT_DIR/scripts/keycloak-bootstrap.sh"
@@ -57,8 +64,14 @@ if [[ -z "${OPENWEBUI_ORCH_TOKEN}" ]]; then
 	exit 1
 fi
 
+echo "Starting tool-server with runtime-scoped Vault token..."
+TOOL_SERVER_AUDIT_INGEST_TOKEN="${TOOL_SERVER_AUDIT_INGEST_TOKEN}" \
+	TOOL_SERVER_VAULT_TOKEN="${TOOL_SERVER_VAULT_TOKEN_RUNTIME}" \
+	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d tool-server
+
 echo "Starting Open WebUI with runtime-scoped orchestrate token..."
 TOOL_SERVER_AUDIT_INGEST_TOKEN="${TOOL_SERVER_AUDIT_INGEST_TOKEN}" \
+	TOOL_SERVER_VAULT_TOKEN="${TOOL_SERVER_VAULT_TOKEN_RUNTIME}" \
 	GARRISON_ORCHESTRATE_BEARER_TOKEN="${OPENWEBUI_ORCH_TOKEN}" \
 	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d open-webui
 

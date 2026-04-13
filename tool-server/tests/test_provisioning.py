@@ -17,12 +17,19 @@ def test_role_policies_unknown_defaults_to_base() -> None:
     policies = ProvisioningService._role_policies("custom")
     assert policies == ["default", "garrison-base"]
 
-def test_ensure_role_posts_expected_policy_payload(monkeypatch) -> None:
+
+def test_issue_spawn_credentials_uses_existing_approle_only(monkeypatch) -> None:
     calls: list[dict] = []
 
     class DummyResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
         def raise_for_status(self) -> None:
             return None
+
+        def json(self):
+            return self._payload
 
     class DummyClient:
         async def __aenter__(self):
@@ -31,16 +38,30 @@ def test_ensure_role_posts_expected_policy_payload(monkeypatch) -> None:
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def post(self, url, headers, json):
-            calls.append({"url": url, "headers": headers, "json": json})
-            return DummyResponse()
+        async def get(self, url, headers):
+            calls.append({"method": "GET", "url": url, "headers": headers})
+            return DummyResponse({"data": {"role_id": "role-rag-1"}})
+
+        async def post(self, url, headers=None, json=None):
+            calls.append({"method": "POST", "url": url, "headers": headers, "json": json})
+            if url.endswith("/secret-id"):
+                return DummyResponse({"data": {"secret_id": "sec-rag-1"}})
+            if url.endswith("/login"):
+                return DummyResponse({"auth": {"accessor": "acc-rag-1"}})
+            raise AssertionError(f"Unexpected Vault call: {url}")
 
     monkeypatch.setattr("app.provisioning.httpx.AsyncClient", lambda timeout: DummyClient())
 
     svc = ProvisioningService()
-    asyncio.run(svc._ensure_role("analyst"))
+    creds = asyncio.run(svc.issue_spawn_credentials("rag"))
 
-    assert len(calls) == 1
-    payload = calls[0]["json"]
-    assert payload["token_policies"] == ["default", "garrison-base"]
-    assert payload["token_ttl"] == "1h"
+    assert creds.role_id == "role-rag-1"
+    assert creds.secret_id == "sec-rag-1"
+    assert creds.token_accessor == "acc-rag-1"
+
+    urls = [call["url"] for call in calls]
+    assert any(url.endswith("/v1/auth/approle/role/rag/role-id") for url in urls)
+    assert any(url.endswith("/v1/auth/approle/role/rag/secret-id") for url in urls)
+    assert any(url.endswith("/v1/auth/approle/login") for url in urls)
+    assert not any("/v1/sys/auth" in url for url in urls)
+    assert not any("/v1/auth/approle/role/rag" in url and call["method"] == "POST" and not url.endswith("/secret-id") for call, url in zip(calls, urls))

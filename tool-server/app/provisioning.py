@@ -38,44 +38,7 @@ class ProvisioningService:
             self._mongo = MongoClient(settings.mongo_uri, serverSelectionTimeoutMS=3000)
         return self._mongo
 
-    async def _ensure_approle_mount(self) -> None:
-        async with httpx.AsyncClient(timeout=10) as client:
-            auth_resp = await client.get(
-                f"{settings.vault_addr}/v1/sys/auth",
-                headers={"X-Vault-Token": settings.vault_token},
-            )
-            auth_resp.raise_for_status()
-            mounts = auth_resp.json().get("data", {})
-            if "approle/" in mounts:
-                return
-            enable_resp = await client.post(
-                f"{settings.vault_addr}/v1/sys/auth/approle",
-                headers={"X-Vault-Token": settings.vault_token},
-                json={"type": "approle"},
-            )
-            enable_resp.raise_for_status()
-
-    async def _ensure_role(self, role_name: str) -> None:
-        ttl = settings.class_token_ttl.get(role_name, "1h")
-        token_policies = self._role_policies(role_name)
-        async with httpx.AsyncClient(timeout=10) as client:
-            role_resp = await client.post(
-                f"{settings.vault_addr}/v1/auth/approle/role/{role_name}",
-                headers={"X-Vault-Token": settings.vault_token},
-                json={
-                    "token_ttl": ttl,
-                    "token_max_ttl": ttl,
-                    "secret_id_num_uses": 1,
-                    "secret_id_ttl": "30m",
-                    "token_no_default_policy": False,
-                    "token_policies": token_policies,
-                },
-            )
-            role_resp.raise_for_status()
-
     async def issue_spawn_credentials(self, agent_class: str) -> VaultSpawnCredentials:
-        await self._ensure_approle_mount()
-        await self._ensure_role(agent_class)
         async with httpx.AsyncClient(timeout=10) as client:
             role_id_resp = await client.get(
                 f"{settings.vault_addr}/v1/auth/approle/role/{agent_class}/role-id",

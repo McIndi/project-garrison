@@ -447,8 +447,36 @@ def test_fetch_rejects_invalid_scheme() -> None:
     assert resp.status_code == 400
 
 
+def test_fetch_rejects_internal_service_hostname() -> None:
+    resp = client.post(
+        "/tools/fetch",
+        headers=BASE_HEADERS,
+        json={"url": "http://vault:8200/v1/sys/health", "method": "GET"},
+    )
+    assert resp.status_code == 400
+
+
+def test_fetch_rejects_private_ip(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.main.socket.getaddrinfo",
+        lambda host, port, type: [(2, 1, 6, "", ("10.0.0.15", int(port)))],
+    )
+
+    resp = client.post(
+        "/tools/fetch",
+        headers=BASE_HEADERS,
+        json={"url": "http://example.com/resource", "method": "GET"},
+    )
+    assert resp.status_code == 400
+
+
 def test_fetch_success(monkeypatch) -> None:
     captured = {}
+
+    monkeypatch.setattr(
+        "app.main.socket.getaddrinfo",
+        lambda host, port, type: [(2, 1, 6, "", ("93.184.216.34", int(port)))],
+    )
 
     async def fake_request(method, url, headers, content):
         class Resp:

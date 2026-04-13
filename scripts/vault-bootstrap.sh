@@ -109,6 +109,36 @@ path "transit/verify/artifact-signing" {
   capabilities = ["update"]
 }'
 
+# Service identity for the tool-server process itself.
+# Scoped to exactly the Vault operations tool-server performs at runtime:
+# spawn-credential issuance, agent token revocation, and transit encryption.
+# Root-level capabilities (sys/auth management, sys/mounts) are intentionally absent;
+# bootstrap.sh is responsible for ensuring those are in place before the service starts.
+put_policy "garrison-tool-server" 'path "auth/approle/role/+/role-id" {
+  capabilities = ["read"]
+}
+path "auth/approle/role/+/secret-id" {
+  capabilities = ["update"]
+}
+path "auth/approle/login" {
+  capabilities = ["create", "update"]
+}
+path "auth/token/revoke-accessor" {
+  capabilities = ["update"]
+}
+path "transit/encrypt/agent-payload" {
+  capabilities = ["update"]
+}
+path "transit/decrypt/agent-payload" {
+  capabilities = ["update"]
+}
+path "transit/encrypt/shared-memory" {
+  capabilities = ["update"]
+}
+path "transit/decrypt/shared-memory" {
+  capabilities = ["update"]
+}'
+
 # Database connection and role definitions (best effort in dev).
 api_post_optional "/v1/database/config/mongo" '{"plugin_name":"mongodb-database-plugin","allowed_roles":"mongo-readonly,mongo-rag-writer,mongo-code-writer","connection_url":"mongodb://{{username}}:{{password}}@mongo:27017/admin?authSource=admin","username":"root","password":"rootpass","verify_connection":false}'
 

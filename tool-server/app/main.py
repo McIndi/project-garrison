@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
 from dataclasses import replace
 import hashlib
+import ipaddress
 import json
 import re
+import socket
 import time
 from datetime import datetime
 from urllib.parse import urlparse
@@ -53,6 +55,21 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="garrison-tool-server", lifespan=lifespan)
+
+
+_FETCH_HOSTNAME_BLOCKLIST = {
+    "localhost",
+    "vault",
+    "mongo",
+    "valkey",
+    "nginx",
+    "beeai-runtime",
+    "tool-server",
+    "otel-collector",
+    "fluent-bit",
+    "keycloak",
+    "open-webui",
+}
 
 
 def _audit_payload(raw: bytes) -> str:
@@ -263,6 +280,30 @@ def _validate_fetch_url(url: str) -> None:
     if not parsed.netloc:
         raise HTTPException(status_code=400, detail="Fetch URL must include host")
 
+    hostname = (parsed.hostname or "").strip().lower()
+    if not hostname:
+        raise HTTPException(status_code=400, detail="Fetch URL must include host")
+    if hostname in _FETCH_HOSTNAME_BLOCKLIST:
+        raise HTTPException(status_code=400, detail="Fetch host is not allowed")
+
+    try:
+        resolved = socket.getaddrinfo(hostname, parsed.port or 80, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise HTTPException(status_code=400, detail="Fetch host cannot be resolved") from exc
+
+    for _, _, _, _, sockaddr in resolved:
+        ip_text = sockaddr[0]
+        ip = ipaddress.ip_address(ip_text)
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            raise HTTPException(status_code=400, detail="Fetch host resolves to a non-public address")
+
 
 def _build_fetch_client() -> httpx.AsyncClient:
     kwargs: dict = {
@@ -321,22 +362,6 @@ async def _transit_encrypt(plaintext: str, key: str) -> str:
             headers={"X-Vault-Token": settings.vault_token},
             json={"plaintext": plaintext},
         )
-        if resp.status_code == 404:
-            await client.post(
-                f"{settings.vault_addr}/v1/sys/mounts/transit",
-                headers={"X-Vault-Token": settings.vault_token},
-                json={"type": "transit"},
-            )
-            await client.post(
-                f"{settings.vault_addr}/v1/transit/keys/{key}",
-                headers={"X-Vault-Token": settings.vault_token},
-                json={"type": "aes256-gcm96"},
-            )
-            resp = await client.post(
-                f"{settings.vault_addr}/v1/transit/encrypt/{key}",
-                headers={"X-Vault-Token": settings.vault_token},
-                json={"plaintext": plaintext},
-            )
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Transit encrypt failed: {resp.text}")
     return resp.json().get("data", {}).get("ciphertext", "")
@@ -349,22 +374,6 @@ async def _transit_decrypt(ciphertext: str, key: str) -> str:
             headers={"X-Vault-Token": settings.vault_token},
             json={"ciphertext": ciphertext},
         )
-        if resp.status_code == 404:
-            await client.post(
-                f"{settings.vault_addr}/v1/sys/mounts/transit",
-                headers={"X-Vault-Token": settings.vault_token},
-                json={"type": "transit"},
-            )
-            await client.post(
-                f"{settings.vault_addr}/v1/transit/keys/{key}",
-                headers={"X-Vault-Token": settings.vault_token},
-                json={"type": "aes256-gcm96"},
-            )
-            resp = await client.post(
-                f"{settings.vault_addr}/v1/transit/decrypt/{key}",
-                headers={"X-Vault-Token": settings.vault_token},
-                json={"ciphertext": ciphertext},
-            )
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Transit decrypt failed: {resp.text}")
     return resp.json().get("data", {}).get("plaintext", "")
