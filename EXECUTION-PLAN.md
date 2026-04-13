@@ -20,8 +20,25 @@ This plan merges the original demo-first delivery plan with spec-critical gaps d
    - `open-webui/pipelines`: 3 passed
 - New automation was added for Vault token lookup enforcement behavior (`require_token_lookup=true` path), including rejection behavior on lookup failure.
 
+Phase 7 Kickoff Status:
+- CI smoke automation added:
+   - `scripts/ci-smoke.sh` (single-command bootstrap + Vault checks + sanity + test flow)
+   - `.github/workflows/phase7-smoke.yml` (GitHub Actions workflow)
+- Local dry run of `scripts/ci-smoke.sh` completed successfully against live stack.
+- Terraform/OpenTofu scaffold added in spec module order:
+   - `terraform/main.tf`
+   - `terraform/variables.tf`
+   - `modules/{infra,vault-core,vault-pki,vault-secrets,vault-transit,vault-policy,agent-role,agent-skill}`
+- Local `init` and `validate` passed against the scaffolded stack.
+- Module contracts upgraded from placeholders to concrete inputs/outputs with cross-module wiring:
+   - root contract outputs in `terraform/outputs.tf`
+   - policy composition map including analyst base-only path
+   - role contract deriving policy assignment from policy module output
+   - skill document path contract for rendered artifacts
+- Operator runbook published: `OPERATIONS-RUNBOOK.md`.
+
 Grounded Next Step:
-- Start Phase 7 by codifying this verification flow in CI (single command smoke path for bootstrap + vault checks + tests), so status is reproducible without manual terminal execution.
+- Continue Phase 7 by implementing provider-backed resources in module order (start with `vault-core` and `vault-transit`) while preserving current script checks as parity gates.
 
 ### Phase 6A - Vault Dynamic + Auditable Secrets Completion
 Goal: complete end-to-end Vault integration so credentials are dynamic, scoped, and auditable across runtime components.
