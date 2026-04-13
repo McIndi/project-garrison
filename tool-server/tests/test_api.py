@@ -7,6 +7,7 @@ os.environ["TOOL_SERVER_REQUIRE_TOKEN_LOOKUP"] = "false"
 os.environ["TOOL_SERVER_SPAWN_MAX_DEPTH"] = "2"
 
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
 from app.main import app
 from app.storage import storage
@@ -183,6 +184,53 @@ def test_orchestrate_defaults_to_rag(monkeypatch) -> None:
     assert captured["payload"]["agent_class"] == "rag"
 
 
+def test_orchestrate_propagates_body_human_session_id(monkeypatch) -> None:
+    headers = dict(BASE_HEADERS)
+    headers.pop("x-human-session-id")
+    captured = {}
+
+    async def fake_issue_spawn_credentials(_: str):
+        class Creds:
+            role_id = "role-id"
+            secret_id = "secret-id"
+            token_accessor = "acc-123"
+
+        return Creds()
+
+    async def fake_post(url, json):
+        captured["payload"] = json
+
+        class Resp:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"agent_id": "agt-rag-2", "status": "spawned"}
+
+        return Resp()
+
+    class DummyClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        post = staticmethod(fake_post)
+
+    monkeypatch.setattr("app.main.provisioning.issue_spawn_credentials", fake_issue_spawn_credentials)
+    monkeypatch.setattr("app.main.provisioning.provision_agent_collections", lambda _: None)
+    monkeypatch.setattr("app.main.httpx.AsyncClient", lambda timeout: DummyClient())
+
+    resp = client.post(
+        "/orchestrate",
+        headers=headers,
+        json={"request_text": "summarize docs", "human_session_id": "human-body-456"},
+    )
+    assert resp.status_code == 200
+    assert captured["payload"]["human_session_id"] == "human-body-456"
+
+
 def test_orchestrate_handles_locally_for_orchestrator_preference() -> None:
     resp = client.post(
         "/orchestrate",
@@ -268,6 +316,32 @@ def test_registry_endpoint_returns_agents() -> None:
     assert resp.status_code == 200
     assert "agents" in resp.json()
     assert isinstance(resp.json()["agents"], list)
+
+
+def test_registry_requires_token_lookup_when_enabled(monkeypatch) -> None:
+    called = {"value": False}
+
+    async def fake_lookup(_: str):
+        called["value"] = True
+        return {"data": {"id": "tok"}}
+
+    monkeypatch.setattr("app.security.settings.require_token_lookup", True)
+    monkeypatch.setattr("app.security._lookup_vault_token", fake_lookup)
+
+    resp = client.get("/tools/registry", headers=BASE_HEADERS)
+    assert resp.status_code == 200
+    assert called["value"] is True
+
+
+def test_registry_rejects_when_token_lookup_fails(monkeypatch) -> None:
+    async def fake_lookup(_: str):
+        raise HTTPException(status_code=401, detail="Vault token lookup failed")
+
+    monkeypatch.setattr("app.security.settings.require_token_lookup", True)
+    monkeypatch.setattr("app.security._lookup_vault_token", fake_lookup)
+
+    resp = client.get("/tools/registry", headers=BASE_HEADERS)
+    assert resp.status_code == 401
 
 
 def test_fetch_rejects_invalid_scheme() -> None:

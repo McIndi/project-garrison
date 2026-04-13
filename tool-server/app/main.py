@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from dataclasses import replace
 import hashlib
 import json
 import re
@@ -502,13 +503,17 @@ async def orchestrate(body: OrchestrateRequest, auth: AuthContext = Depends(requ
             result_summary="Handled by orchestrator without delegation.",
         )
 
+    effective_auth = auth
+    if body.human_session_id != auth.human_session_id:
+        effective_auth = replace(auth, human_session_id=body.human_session_id)
+
     spawn_result = await _spawn_with_auth(
         SpawnRequest(
             agent_class=target_class,
             task_context=body.request_text,
             memory_keys=[f"shared:memory:workflow:{workflow_id}"],
         ),
-        auth,
+        effective_auth,
     )
 
     return OrchestrateResponse(

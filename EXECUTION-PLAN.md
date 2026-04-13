@@ -6,6 +6,23 @@ This plan merges the original demo-first delivery plan with spec-critical gaps d
 - Phase 0 through Phase 5 are functionally in place for MVP behavior and demo flow.
 - Remaining work starts at consolidated Phase 6A below.
 
+### Verification Checkpoint (2026-04-13)
+- Runtime verification passed against live stack via scripts:
+   - `scripts/vault-bootstrap.sh`
+   - `scripts/vault-readiness.sh`
+   - `scripts/vault-policy-check.sh`
+   - `scripts/vault-dynamic-secrets-check.sh`
+   - `scripts/sanity-check.sh`
+- `sanity-check` confirmed health, memory/scratch, transit encrypt/decrypt, spawn/delete, and `/orchestrate` delegation flow.
+- `TOOL_SERVER_REQUIRE_TOKEN_LOOKUP` is enabled in `compose.yaml` for runtime enforcement.
+- Automated tests pass:
+   - `tool-server`: 30 passed
+   - `open-webui/pipelines`: 3 passed
+- New automation was added for Vault token lookup enforcement behavior (`require_token_lookup=true` path), including rejection behavior on lookup failure.
+
+Grounded Next Step:
+- Start Phase 7 by codifying this verification flow in CI (single command smoke path for bootstrap + vault checks + tests), so status is reproducible without manual terminal execution.
+
 ### Phase 6A - Vault Dynamic + Auditable Secrets Completion
 Goal: complete end-to-end Vault integration so credentials are dynamic, scoped, and auditable across runtime components.
 
