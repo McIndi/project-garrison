@@ -24,9 +24,56 @@ class Pipeline:
         self.orchestrate_root_id = os.getenv("GARRISON_ORCHESTRATE_ROOT_ID", self.orchestrate_agent_id)
         self.orchestrate_bearer_token = os.getenv("GARRISON_ORCHESTRATE_BEARER_TOKEN", "")
         self.orchestrate_preferred_class = os.getenv("GARRISON_ORCHESTRATE_DEFAULT_CLASS", "rag")
+        self.orchestrate_required_roles = self._csv_env("GARRISON_ORCHESTRATE_REQUIRED_ROLES")
+        self.orchestrate_required_groups = self._csv_env("GARRISON_ORCHESTRATE_REQUIRED_GROUPS")
+        self.orchestrate_require_user_claims = os.getenv("GARRISON_ORCHESTRATE_REQUIRE_USER_CLAIMS", "true").lower() == "true"
         self.otel_enabled = os.getenv("GARRISON_OTEL_ENABLED", "true").lower() == "true"
         self.otel_logs_endpoint = os.getenv("GARRISON_OTEL_LOGS_ENDPOINT", "http://otel-collector:4318/v1/logs")
         self.otel_timeout_seconds = float(os.getenv("GARRISON_OTEL_TIMEOUT_SECONDS", "2"))
+
+    @staticmethod
+    def _csv_env(name: str) -> set[str]:
+        raw = os.getenv(name, "")
+        if not raw:
+            return set()
+        return {item.strip() for item in raw.split(",") if item.strip()}
+
+    @staticmethod
+    def _as_claim_set(value: Any) -> set[str]:
+        if isinstance(value, str):
+            return {value.strip()} if value.strip() else set()
+        if isinstance(value, list):
+            return {str(item).strip() for item in value if str(item).strip()}
+        return set()
+
+    def _extract_user_claims(self, user: dict[str, Any] | None) -> dict[str, Any]:
+        user_obj = user or {}
+        roles = set()
+        groups = set()
+        for role_key in ("roles", "role", "realm_roles"):
+            roles |= self._as_claim_set(user_obj.get(role_key))
+        for group_key in ("groups", "group"):
+            groups |= self._as_claim_set(user_obj.get(group_key))
+
+        return {
+            "sub": user_obj.get("sub") or user_obj.get("user_id") or user_obj.get("id"),
+            "iss": user_obj.get("iss") or user_obj.get("issuer"),
+            "roles": sorted(roles),
+            "groups": sorted(groups),
+        }
+
+    def _authorize_orchestration(self, user: dict[str, Any] | None) -> dict[str, Any]:
+        claims = self._extract_user_claims(user)
+
+        if self.orchestrate_require_user_claims and (not claims["sub"] or not claims["iss"]):
+            raise PermissionError("Missing required user identity claims (sub/iss)")
+
+        role_match = not self.orchestrate_required_roles or bool(set(claims["roles"]) & self.orchestrate_required_roles)
+        group_match = not self.orchestrate_required_groups or bool(set(claims["groups"]) & self.orchestrate_required_groups)
+        if not role_match and not group_match:
+            raise PermissionError("User is not authorized for orchestration")
+
+        return claims
 
     def _payload_repr(self, payload: dict[str, Any]) -> str:
         raw = json.dumps(payload, default=str).encode("utf-8")
@@ -143,12 +190,14 @@ class Pipeline:
             "Content-Type": "application/json",
         }
 
-    async def _maybe_orchestrate(self, body: dict[str, Any], human_session_id: str) -> dict[str, Any] | None:
+    async def _maybe_orchestrate(self, body: dict[str, Any], human_session_id: str, user: dict[str, Any] | None = None) -> dict[str, Any] | None:
         if not self.orchestrate_enabled:
             return None
 
         if not self.orchestrate_bearer_token:
             raise RuntimeError("Missing GARRISON_ORCHESTRATE_BEARER_TOKEN")
+
+        self._authorize_orchestration(user)
 
         request_text = self._extract_request_text(body)
         if not request_text:
@@ -178,11 +227,17 @@ class Pipeline:
         body["metadata"].setdefault("trace_id", str(uuid4()))
 
         try:
-            orchestration = await self._maybe_orchestrate(body, human_session_id)
+            orchestration = await self._maybe_orchestrate(body, human_session_id, user)
             if orchestration is not None:
                 body["metadata"]["garrison_orchestration"] = orchestration
         except Exception as exc:  # noqa: BLE001
             body["metadata"]["garrison_orchestration_error"] = str(exc)
+
+        claims = self._extract_user_claims(user)
+        body["metadata"]["user_sub"] = claims["sub"] or ""
+        body["metadata"]["user_issuer"] = claims["iss"] or ""
+        body["metadata"]["user_roles"] = claims["roles"]
+        body["metadata"]["user_groups"] = claims["groups"]
 
         try:
             await self._emit_otel_log("inlet", body, user)

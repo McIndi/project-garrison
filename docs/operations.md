@@ -15,6 +15,7 @@ Bootstrap includes:
 - Runtime audit ingest token generation and injection for Fluent Bit/tool-server.
 - Open WebUI scoped orchestrate token issuance from Vault and Open WebUI startup with injected token.
 - Strict token metadata contract enforcement in tool-server (`agent_id`, `agent_class`).
+- Open WebUI pipeline claim-based orchestration authorization (required roles/groups and `sub`/`iss` claims).
 - Vault readiness checks.
 - Vault policy matrix checks.
 - Vault dynamic secret lifecycle checks.
@@ -52,6 +53,12 @@ Optional environment knobs:
 
 - PYTHON_CMD for explicit interpreter.
 - CI_INSTALL_DEPS=true to force dependency install.
+
+Phase C orchestration authz knobs (Open WebUI pipeline):
+
+- GARRISON_ORCHESTRATE_REQUIRED_ROLES (comma-separated)
+- GARRISON_ORCHESTRATE_REQUIRED_GROUPS (comma-separated)
+- GARRISON_ORCHESTRATE_REQUIRE_USER_CLAIMS (`true|false`)
 
 ## Test Commands
 

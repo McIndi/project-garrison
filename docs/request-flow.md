@@ -17,6 +17,8 @@ sequenceDiagram
 
     User->>OW: Ask for task execution
     OW->>OT: OTLP log emit (inlet)
+    Note over User,OW: Open WebUI user claims include sub/iss and role/group memberships
+    Note over OW: Pipeline enforces orchestration role/group gate before calling tool-server
     OW->>TS: POST /orchestrate
     Note over OW,TS: Headers include bearer + agent identity + human_session_id
 
@@ -67,3 +69,4 @@ sequenceDiagram
 - If caller is not orchestrator for spawn/delete/orchestrate, request returns 403.
 - If spawn depth exceeds configured max depth, request returns 403.
 - Open WebUI pipeline orchestration errors are non-fatal to the UI request and captured in metadata.
+- Open WebUI pipeline blocks orchestration for users missing required role/group claims.

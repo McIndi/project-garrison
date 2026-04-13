@@ -102,6 +102,9 @@ services:
       GARRISON_ORCHESTRATE_AGENT_CLASS: orchestrator
       GARRISON_ORCHESTRATE_ROOT_ID: agent-root
       GARRISON_ORCHESTRATE_DEFAULT_CLASS: rag
+      GARRISON_ORCHESTRATE_REQUIRED_ROLES: garrison-orchestrator
+      GARRISON_ORCHESTRATE_REQUIRED_GROUPS: garrison-orchestrators
+      GARRISON_ORCHESTRATE_REQUIRE_USER_CLAIMS: "true"
     volumes:
       - ./open-webui/pipelines:/app/pipelines:ro
     ports:

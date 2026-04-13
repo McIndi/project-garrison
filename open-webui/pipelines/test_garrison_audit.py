@@ -34,6 +34,9 @@ def test_extract_request_text_uses_last_user_message() -> None:
 
 def test_inlet_calls_orchestrate_and_sets_metadata(monkeypatch) -> None:
     pipeline = Pipeline()
+    pipeline.orchestrate_required_roles = set()
+    pipeline.orchestrate_required_groups = set()
+    pipeline.orchestrate_require_user_claims = False
     captured = {}
 
     async def fake_post(url, headers, json):
@@ -78,6 +81,9 @@ def test_inlet_calls_orchestrate_and_sets_metadata(monkeypatch) -> None:
 
 def test_inlet_orchestrate_failure_is_non_fatal(monkeypatch) -> None:
     pipeline = Pipeline()
+    pipeline.orchestrate_required_roles = set()
+    pipeline.orchestrate_required_groups = set()
+    pipeline.orchestrate_require_user_claims = False
 
     async def fake_post(url, headers, json):
         raise RuntimeError("network down")
@@ -120,6 +126,31 @@ def test_inlet_emits_otel_when_enabled(monkeypatch) -> None:
     assert captured["stage"] == "inlet"
 
 
+def test_inlet_propagates_user_identity_claims(monkeypatch) -> None:
+    pipeline = Pipeline()
+    pipeline.orchestrate_enabled = False
+
+    async def fake_emit(stage, body, user):
+        return None
+
+    monkeypatch.setattr(pipeline, "_emit_otel_log", fake_emit)
+
+    body = {"messages": [{"role": "user", "content": "hello"}], "metadata": {}}
+    user = {
+        "session_id": "human-sess-claims",
+        "sub": "user-123",
+        "iss": "https://keycloak.local/realms/garrison",
+        "roles": ["garrison-orchestrator"],
+        "groups": ["garrison-orchestrators"],
+    }
+    result = asyncio.run(pipeline.inlet(body, user))
+
+    assert result["metadata"]["user_sub"] == "user-123"
+    assert result["metadata"]["user_issuer"] == "https://keycloak.local/realms/garrison"
+    assert result["metadata"]["user_roles"] == ["garrison-orchestrator"]
+    assert result["metadata"]["user_groups"] == ["garrison-orchestrators"]
+
+
 def test_outlet_ignores_otel_failure() -> None:
     pipeline = Pipeline()
     pipeline.otel_enabled = True
@@ -149,3 +180,50 @@ def test_inlet_sets_orchestration_error_when_bearer_missing(monkeypatch) -> None
 
     assert "garrison_orchestration_error" in result["metadata"]
     assert "GARRISON_ORCHESTRATE_BEARER_TOKEN" in result["metadata"]["garrison_orchestration_error"]
+
+
+def test_inlet_sets_orchestration_error_when_user_not_authorized(monkeypatch) -> None:
+    pipeline = Pipeline()
+    pipeline.orchestrate_required_roles = {"garrison-orchestrator"}
+    pipeline.orchestrate_required_groups = {"garrison-orchestrators"}
+    pipeline.orchestrate_require_user_claims = True
+
+    async def fake_emit(stage, body, user):
+        return None
+
+    monkeypatch.setattr(pipeline, "_emit_otel_log", fake_emit)
+
+    body = {"messages": [{"role": "user", "content": "run task"}], "metadata": {}}
+    user = {
+        "session_id": "human-sess-6",
+        "sub": "user-456",
+        "iss": "https://keycloak.local/realms/garrison",
+        "roles": ["viewer"],
+        "groups": ["analysts"],
+    }
+    result = asyncio.run(pipeline.inlet(body, user))
+
+    assert "garrison_orchestration_error" in result["metadata"]
+    assert "not authorized" in result["metadata"]["garrison_orchestration_error"]
+
+
+def test_inlet_sets_orchestration_error_when_required_claims_missing(monkeypatch) -> None:
+    pipeline = Pipeline()
+    pipeline.orchestrate_required_roles = set()
+    pipeline.orchestrate_required_groups = set()
+    pipeline.orchestrate_require_user_claims = True
+
+    async def fake_emit(stage, body, user):
+        return None
+
+    monkeypatch.setattr(pipeline, "_emit_otel_log", fake_emit)
+
+    body = {"messages": [{"role": "user", "content": "run task"}], "metadata": {}}
+    user = {
+        "session_id": "human-sess-7",
+        "roles": ["garrison-orchestrator"],
+    }
+    result = asyncio.run(pipeline.inlet(body, user))
+
+    assert "garrison_orchestration_error" in result["metadata"]
+    assert "sub/iss" in result["metadata"]["garrison_orchestration_error"]

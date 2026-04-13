@@ -54,6 +54,7 @@ Notes about accuracy:
 - Open WebUI garrison_audit pipeline now emits inlet/outlet OTLP logs to the collector endpoint.
 - Open WebUI orchestrate bearer token is issued at bootstrap from Vault with scoped policies and agent metadata (no static compose root token).
 - Fluent Bit -> tool-server audit ingest token is generated at bootstrap and injected at runtime (no static compose token literal).
+- Open WebUI pipeline enforces claim-based orchestration authorization (required role/group and `sub`/`iss` identity claims) before calling tool-server.
 - Nginx is active in local compose as the outbound fetch proxy for tool-server.
 - Fluent Bit is active in local compose, tails Vault and Nginx logs, and forwards records to tool-server internal audit ingest endpoints that persist to MongoDB.
 
