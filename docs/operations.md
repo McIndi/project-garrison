@@ -61,7 +61,7 @@ Optional environment knobs:
 
 - PYTHON_CMD for explicit interpreter.
 - CI_INSTALL_DEPS=true to force dependency install.
-- KEYCLOAK_BASE_URL (default: <http://127.0.0.1:8081>)
+- KEYCLOAK_BASE_URL (default: `127.0.0.1:8081`)
 - KEYCLOAK_ADMIN_USER / KEYCLOAK_ADMIN_PASSWORD
 - KEYCLOAK_REALM (default: garrison)
 - KEYCLOAK_OPENWEBUI_CLIENT_ID / KEYCLOAK_OPENWEBUI_CLIENT_SECRET
