@@ -72,7 +72,7 @@ sequenceDiagram
     H->>OW: POST /api/chat (session cookie)
     OW->>P: inlet(body, user_dict)
     Note over P: ① OIDC claim check<br/>iss / aud / exp / roles / groups<br/>(trusts caller-supplied dict — no sig verify)
-    P->>TS: POST /orchestrate<br/>Authorization: Bearer and orchestrate_token<br/>x-agent-id / x-agent-class headers
+    P->>TS: POST /orchestrate<br/>Authorization: Bearer &lt;orchestrate_token&gt;<br/>x-agent-id / x-agent-class headers
     TS->>V: GET /v1/auth/token/lookup-self
     Note over TS: ② Token identity binding<br/>token metadata.agent_id == x-agent-id<br/>token metadata.agent_class == x-agent-class
     V-->>TS: policies + metadata
@@ -82,11 +82,11 @@ sequenceDiagram
     OW-->>H: model response
 ```
 
-**Boundary ① — OIDC (pipeline):** `_authorize_orchestration` in [garrison_audit.py:73](open-webui/pipelines/garrison_audit.py#L73) reads claims from the `user` dict supplied by Open WebUI. It checks `iss`, `aud`, `exp`, roles, and groups — but performs **no cryptographic signature verification**. The trust anchor is whatever Open WebUI's own middleware already validated. A misconfigured or downgraded Open WebUI instance, or any direct POST to the `tool-server` that bypasses the pipeline, entirely skips this boundary.
+**Boundary ① — OIDC (pipeline):** `_authorize_orchestration` in [`garrison_audit.py:73`](https://github.com/mcindi/project-garrison/blob/main/open-webui/pipelines/garrison_audit.py#L73) reads claims from the `user` dict supplied by Open WebUI. It checks `iss`, `aud`, `exp`, roles, and groups — but performs **no cryptographic signature verification**. The trust anchor is whatever Open WebUI's own middleware already validated. A misconfigured or downgraded Open WebUI instance, or any direct POST to the `tool-server` that bypasses the pipeline, entirely skips this boundary.
 
-**Boundary ② — Vault token lookup:** Enforced when `TOOL_SERVER_REQUIRE_TOKEN_LOOKUP=true` and `TOOL_SERVER_ENFORCE_TOKEN_IDENTITY_BINDING=true` (both set in [compose.yaml:129-130](compose.yaml#L129)). This is the strongest boundary — it contacts Vault on every request. However the steady-state credential in Vault is the **root token** (discussed in §3), so a leaked bearer token already carries root-level Vault access.
+**Boundary ② — Vault token lookup:** Enforced when `TOOL_SERVER_REQUIRE_TOKEN_LOOKUP=true` and `TOOL_SERVER_ENFORCE_TOKEN_IDENTITY_BINDING=true` (both set in [`compose.yaml:129`](https://github.com/mcindi/project-garrison/blob/main/compose.yaml#L129)). This is the strongest boundary — it contacts Vault on every request. However the steady-state credential in Vault is the **root token** (discussed in §3), so a leaked bearer token already carries root-level Vault access.
 
-**Boundary ③ — Agent class gate:** Enforced in [main.py:381](tool-server/app/main.py#L381) and [main.py:627](tool-server/app/main.py#L627). Solid for spawn and orchestrate endpoints.
+**Boundary ③ — Agent class gate:** Enforced in [`main.py:381`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L381) and [`main.py:627`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L627). Solid for spawn and orchestrate endpoints.
 
 ---
 
@@ -106,7 +106,7 @@ flowchart LR
     T1 -->|"response body\nreturned to caller"| A
 ```
 
-`_validate_fetch_url` at [main.py:259](tool-server/app/main.py#L259) only rejects non-`http`/`https` schemes and empty netlocs. There is no allowlist, no private-range blocklist, and no blocklist of `169.254.169.254`. The nginx forward proxy at [nginx.conf:19](config/nginx/nginx.conf#L19) uses `proxy_pass http://$http_host$uri$is_args$args` — it blindly forwards to any destination resolvable from the container network, including all other compose services. Because `fetch_require_proxy=true` is set, all fetches route through nginx and are logged — but logging is not egress control.
+`_validate_fetch_url` at [`main.py:259`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L259) only rejects non-`http`/`https` schemes and empty netlocs. There is no allowlist, no private-range blocklist, and no blocklist of `169.254.169.254`. The nginx forward proxy at [`nginx.conf:19`](https://github.com/mcindi/project-garrison/blob/main/config/nginx/nginx.conf#L19) uses `proxy_pass http://$http_host$uri$is_args$args` — it blindly forwards to any destination resolvable from the container network, including all other compose services. Because `fetch_require_proxy=true` is set, all fetches route through nginx and are logged — but logging is not egress control.
 
 A `code`-class or `rag`-class agent can reach `http://vault:8200/v1/sys/...` and retrieve the full Vault API response, including any sensitive mount metadata. Combined with the root token embedded in `compose.yaml`, this turns SSRF into full Vault compromise without any credential.
 
@@ -122,7 +122,7 @@ flowchart TD
     MDB --> RES["200 OK\ndoc summaries / text returned\nmax 240 chars per doc"]
 ```
 
-`_parse_corpus` at [main.py:373](tool-server/app/main.py#L373) splits on the first `.` and directly uses the result as `client[db_name][coll_name]`. The `SearchRequest.corpus` field is validated only for presence — its value is fully caller-controlled. An authenticated agent can enumerate any collection in any MongoDB database by name, including `admin.system.users`, `garrison_audit.llm`, and `agent_<other_agent_id>.handoffs`. The `query` parameter is only used for in-memory scoring *after* the database read; the read itself has no predicate.
+`_parse_corpus` at [`main.py:373`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L373) splits on the first `.` and directly uses the result as `client[db_name][coll_name]`. The `SearchRequest.corpus` field is validated only for presence — its value is fully caller-controlled. An authenticated agent can enumerate any collection in any MongoDB database by name, including `admin.system.users`, `garrison_audit.llm`, and `agent_<other_agent_id>.handoffs`. The `query` parameter is only used for in-memory scoring *after* the database read; the read itself has no predicate.
 
 ---
 
@@ -130,13 +130,13 @@ flowchart TD
 
 | Service | Credential | Location | Host Port |
 |---|---|---|---|
-| MongoDB | `root` / `rootpass` | [compose.yaml:16-17](compose.yaml#L16) | 27017 |
-| Valkey | `rootpass` | [compose.yaml:6](compose.yaml#L6) | 6379 |
-| Vault | root token `root` | [compose.yaml:28-30](compose.yaml#L28) | 8200 |
-| Keycloak admin | `admin` / `admin` | [compose.yaml:87-88](compose.yaml#L87) | 8081 |
-| Keycloak OIDC client | `garrison-openwebui-secret` | [keycloak-bootstrap.sh](scripts/keycloak-bootstrap.sh) | — |
-| tool-server runtime | Vault root token `root` | [compose.yaml:128](compose.yaml#L128) | — |
-| beeai-runtime | `BEEAI_API_KEY=demo` | [compose.yaml:43](compose.yaml#L43) | — |
+| MongoDB | `root` / `rootpass` | [`compose.yaml:16`](https://github.com/mcindi/project-garrison/blob/main/compose.yaml#L16) | 27017 |
+| Valkey | `rootpass` | [`compose.yaml:6`](https://github.com/mcindi/project-garrison/blob/main/compose.yaml#L6) | 6379 |
+| Vault | root token `root` | [`compose.yaml:28`](https://github.com/mcindi/project-garrison/blob/main/compose.yaml#L28) | 8200 |
+| Keycloak admin | `admin` / `admin` | [`compose.yaml:87`](https://github.com/mcindi/project-garrison/blob/main/compose.yaml#L87) | 8081 |
+| Keycloak OIDC client | `garrison-openwebui-secret` | [`keycloak-bootstrap.sh`](https://github.com/mcindi/project-garrison/blob/main/scripts/keycloak-bootstrap.sh) | — |
+| tool-server runtime | Vault root token `root` | [`compose.yaml:128`](https://github.com/mcindi/project-garrison/blob/main/compose.yaml#L128) | — |
+| beeai-runtime | `BEEAI_API_KEY=demo` | [`compose.yaml:43`](https://github.com/mcindi/project-garrison/blob/main/compose.yaml#L43) | — |
 
 All data-plane ports (27017, 6379, 8200) are bound on the default Docker interface which is `0.0.0.0` unless an explicit bind address is given. On a developer workstation with a routable LAN address, these are reachable from the local network.
 
@@ -144,7 +144,7 @@ All data-plane ports (27017, 6379, 8200) are bound on the default Docker interfa
 
 ### 2.5 Spawn-Depth Header Spoofing
 
-`x-spawn-depth` is a caller-supplied header trusted by `require_auth_context` at [security.py:101](tool-server/app/security.py#L101). The depth is not stamped into the Vault token metadata. A spawned agent that received an AppRole token (class: `rag` or `code`) cannot call `/tools/spawn` because the class gate at [main.py:381](tool-server/app/main.py#L381) blocks non-orchestrators. However, any `orchestrator`-class token with `x-spawn-depth: 0` overrides the depth counter regardless of how it was originally issued, resetting the `spawn_max_depth=2` guardrail.
+`x-spawn-depth` is a caller-supplied header trusted by `require_auth_context` at [`security.py:101`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/security.py#L101). The depth is not stamped into the Vault token metadata. A spawned agent that received an AppRole token (class: `rag` or `code`) cannot call `/tools/spawn` because the class gate at [`main.py:381`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L381) blocks non-orchestrators. However, any `orchestrator`-class token with `x-spawn-depth: 0` overrides the depth counter regardless of how it was originally issued, resetting the `spawn_max_depth=2` guardrail.
 
 ---
 
@@ -156,7 +156,7 @@ for secret_key in ("authorization", "token", "password", "secret", "api_key"):
     text = text.replace(secret_key, f"{secret_key}_redacted")
 ```
 
-This replaces the **key name** substring, not the value. Given the payload `{"password":"hunter2"}`, the output is `{"password_redacted":"hunter2"}` — the plaintext secret is preserved. The mode `"full"` (the default from [compose.yaml:97](compose.yaml#L97)) sends the entire body to OTel stdout, but users who configure `GARRISON_AUDIT_PAYLOAD_MODE=redacted` receive a false sense of protection. Compare with the `tool-server`'s correct implementation at [main.py:64-65](tool-server/app/main.py#L64), which uses regex substitution to replace the *value*.
+This replaces the **key name** substring, not the value. Given the payload `{"password":"hunter2"}`, the output is `{"password_redacted":"hunter2"}` — the plaintext secret is preserved. The mode `"full"` (the default from [`compose.yaml:97`](https://github.com/mcindi/project-garrison/blob/main/compose.yaml#L97)) sends the entire body to OTel stdout, but users who configure `GARRISON_AUDIT_PAYLOAD_MODE=redacted` receive a false sense of protection. Compare with the `tool-server`'s correct implementation at [`main.py:64`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L64), which uses regex substitution to replace the *value*.
 
 ---
 
@@ -217,13 +217,13 @@ The `tool-server` uses the Vault root token for every operation: token lookup, A
 
 ### 3.3 Dynamic Credential Exposure
 
-`vault-dynamic-secrets-check.sh` writes issued Vault DB credentials to `/tmp/garrison-creds-<role>.json` at [line 96](scripts/vault-dynamic-secrets-check.sh#L96). These files are world-readable by default (subject only to process umask) and persist across invocations since there is no cleanup step. The files contain plaintext `username`, `password`, `lease_id`, and `lease_duration`. Similarly, lease lookup responses are written to `/tmp/garrison-lease-lookup.json` at [line 47](scripts/vault-dynamic-secrets-check.sh#L47).
+`vault-dynamic-secrets-check.sh` writes issued Vault DB credentials to `/tmp/garrison-creds-<role>.json` at [`line 96`](https://github.com/mcindi/project-garrison/blob/main/scripts/vault-dynamic-secrets-check.sh#L96). These files are world-readable by default (subject only to process umask) and persist across invocations since there is no cleanup step. The files contain plaintext `username`, `password`, `lease_id`, and `lease_duration`. Similarly, lease lookup responses are written to `/tmp/garrison-lease-lookup.json` at [`line 47`](https://github.com/mcindi/project-garrison/blob/main/scripts/vault-dynamic-secrets-check.sh#L47).
 
 ---
 
 ### 3.4 OTel Telemetry Leak
 
-The OTel Collector at [collector.yaml:11](config/otel/collector.yaml#L11) exports everything to the `debug` exporter with `verbosity: detailed`. Every audit event — including the `request_payload` field that defaults to the full request body — is printed to the collector's stdout. Because `payload_mode` defaults to `"full"`, any request body containing credentials, conversation content, or agent task context flows into `docker logs otel-collector`. There is no backend exporter (no Loki, Jaeger, or Prometheus configured), making this purely a data-leakage sink.
+The OTel Collector at [`collector.yaml:11`](https://github.com/mcindi/project-garrison/blob/main/config/otel/collector.yaml#L11) exports everything to the `debug` exporter with `verbosity: detailed`. Every audit event — including the `request_payload` field that defaults to the full request body — is printed to the collector's stdout. Because `payload_mode` defaults to `"full"`, any request body containing credentials, conversation content, or agent task context flows into `docker logs otel-collector`. There is no backend exporter (no Loki, Jaeger, or Prometheus configured), making this purely a data-leakage sink.
 
 ---
 
@@ -250,11 +250,11 @@ flowchart TD
 
 Four correctness issues affect the audit pipeline:
 
-1. **Duplicate records on Fluent Bit restart** — `Read_from_Head true` in `fluent-bit.conf` causes Fluent Bit to re-read the entire log file from the beginning on every restart, producing duplicate audit records in MongoDB with no deduplication key.
+1. **Duplicate records on Fluent Bit restart** — `Read_from_Head true` in [`fluent-bit.conf`](https://github.com/mcindi/project-garrison/blob/main/config/fluent-bit/fluent-bit.conf) causes Fluent Bit to re-read the entire log file from the beginning on every restart, producing duplicate audit records in MongoDB with no deduplication key.
 
-2. **Silent audit loss** — The `garrison_audit.llm` insert at [main.py:164](tool-server/app/main.py#L164) is wrapped in `except Exception: pass`. Mongo downtime, network issues, or schema errors cause records to be silently dropped. There is no counter, alert, or fallback write.
+2. **Silent audit loss** — The `garrison_audit.llm` insert at [`main.py:164`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L164) is wrapped in `except Exception: pass`. Mongo downtime, network issues, or schema errors cause records to be silently dropped. There is no counter, alert, or fallback write.
 
-3. **Non-constant-time token comparison** — The audit ingest token check at [main.py:188](tool-server/app/main.py#L188) uses `!=` string comparison. While network timing jitter dominates in practice, `hmac.compare_digest` is the correct primitive for secret comparison.
+3. **Non-constant-time token comparison** — The audit ingest token check at [`main.py:188`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L188) uses `!=` string comparison. While network timing jitter dominates in practice, `hmac.compare_digest` is the correct primitive for secret comparison.
 
 4. **Time-based CI sync** — `audit-pipeline-check.sh` uses `sleep 6` to wait for Fluent Bit to flush, making the CI check racy on loaded machines.
 
@@ -279,9 +279,9 @@ flowchart TD
     end
 ```
 
-**Whitespace query bypass** — `SearchRequest.query` has `min_length=1` enforced by Pydantic on the raw string. A query of `" "` (single space) passes validation, then `body.query.strip()` at [main.py:593](tool-server/app/main.py#L593) produces an empty string `q`. `text.lower().count("")` returns `len(text)+1` for every document, scoring all docs at maximum and returning the `top_k` results regardless of relevance — effectively turning a scored search into an unfiltered dump.
+**Whitespace query bypass** — `SearchRequest.query` has `min_length=1` enforced by Pydantic on the raw string. A query of `" "` (single space) passes validation, then `body.query.strip()` at [`main.py:593`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L593) produces an empty string `q`. `text.lower().count("")` returns `len(text)+1` for every document, scoring all docs at maximum and returning the `top_k` results regardless of relevance — effectively turning a scored search into an unfiltered dump.
 
-**`_spawn_with_auth` retry loop** — The three-attempt retry at [main.py:401](tool-server/app/main.py#L401) has no sleep between attempts. On a slow or unavailable `beeai-runtime`, this creates a tight busy-loop against the upstream service, potentially amplifying load.
+**`_spawn_with_auth` retry loop** — The three-attempt retry at [`main.py:401`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L401) has no sleep between attempts. On a slow or unavailable `beeai-runtime`, this creates a tight busy-loop against the upstream service, potentially amplifying load.
 
 ---
 
@@ -306,15 +306,15 @@ sequenceDiagram
     end
 ```
 
-`bootstrap.sh` launches all services with `compose up -d` then immediately executes `vault-bootstrap.sh`. There is no readiness polling loop for Vault before the bootstrap attempts API calls. `vault-bootstrap.sh` runs under `set -euo pipefail`, so a 503 or connection failure on the first `api_get "/v1/sys/audit"` at [line 46](scripts/vault-bootstrap.sh#L46) terminates the entire bootstrap. `keycloak-bootstrap.sh` includes a proper `wait_for_keycloak` poll loop; Vault lacks the equivalent.
+[`bootstrap.sh`](https://github.com/mcindi/project-garrison/blob/main/scripts/bootstrap.sh) launches all services with `compose up -d` then immediately executes `vault-bootstrap.sh`. There is no readiness polling loop for Vault before the bootstrap attempts API calls. `vault-bootstrap.sh` runs under `set -euo pipefail`, so a 503 or connection failure on the first `api_get "/v1/sys/audit"` at [`vault-bootstrap.sh:46`](https://github.com/mcindi/project-garrison/blob/main/scripts/vault-bootstrap.sh#L46) terminates the entire bootstrap. `keycloak-bootstrap.sh` includes a proper `wait_for_keycloak` poll loop; Vault lacks the equivalent.
 
 ---
 
 ### 4.4 Container Hardening Gaps
 
-Neither [tool-server/Dockerfile](tool-server/Dockerfile) nor [beeai-runtime/Dockerfile](beeai-runtime/Dockerfile) include a `USER` directive. Both containers run as UID 0 (root). Combined with Vault's `IPC_LOCK` capability (`cap_add: IPC_LOCK` in [compose.yaml:26](compose.yaml#L26)) and bootstrap's use of `docker compose exec -T -u root vault`, the attack surface within the container network is materially elevated. No `HEALTHCHECK` is defined in any Dockerfile, making compose-level health gating unavailable. Base image tags (`python:3.11-slim`, `nginx:1.27-alpine`) are not pinned to digests, allowing silent base image drift.
+Neither [`tool-server/Dockerfile`](https://github.com/mcindi/project-garrison/blob/main/tool-server/Dockerfile) nor [`beeai-runtime/Dockerfile`](https://github.com/mcindi/project-garrison/blob/main/beeai-runtime/Dockerfile) include a `USER` directive. Both containers run as UID 0 (root). Combined with Vault's `IPC_LOCK` capability (`cap_add: IPC_LOCK` in [`compose.yaml:26`](https://github.com/mcindi/project-garrison/blob/main/compose.yaml#L26)) and bootstrap's use of `docker compose exec -T -u root vault`, the attack surface within the container network is materially elevated. No `HEALTHCHECK` is defined in any Dockerfile, making compose-level health gating unavailable. Base image tags (`python:3.11-slim`, `nginx:1.27-alpine`) are not pinned to digests, allowing silent base image drift.
 
-Additionally, `logs/nginx/access.log` and `logs/nginx/error.log` appear to be tracked by git (the `logs/` gitignore rule post-dates their addition). These files may contain historical request data including internal IP addresses and URL patterns.
+Additionally, [`logs/nginx/`](https://github.com/mcindi/project-garrison/tree/main/logs/nginx/) access and error logs appear to be tracked by git (the `logs/` gitignore rule post-dates their addition). These files may contain historical request data including internal IP addresses and URL patterns.
 
 ---
 
@@ -322,27 +322,27 @@ Additionally, `logs/nginx/access.log` and `logs/nginx/error.log` appear to be tr
 
 | # | Finding | Severity | File / Line |
 |---|---|---|---|
-| F-01 | Vault root token is the steady-state runtime credential for `tool-server` | **Critical** | [compose.yaml:128](compose.yaml#L128) |
-| F-02 | SSRF via `/tools/fetch` — no host/range allowlist, nginx proxies to any destination | **Critical** | [main.py:259](tool-server/app/main.py#L259), [nginx.conf:19](config/nginx/nginx.conf#L19) |
-| F-03 | `/tools/search` corpus is fully caller-controlled — cross-collection enumeration | **High** | [main.py:373](tool-server/app/main.py#L373), [main.py:598](tool-server/app/main.py#L598) |
-| F-04 | Hardcoded weak credentials on all data services, all bound `0.0.0.0` | **High** | [compose.yaml:6-88](compose.yaml#L6) |
-| F-05 | Keycloak OIDC client secret hardcoded in bootstrap script | **High** | [keycloak-bootstrap.sh](scripts/keycloak-bootstrap.sh) |
-| F-06 | Vault runs in `-dev` mode — no TLS, no persistence, unsealed always | **High** | [compose.yaml:30](compose.yaml#L30) |
-| F-07 | Broken redaction in pipeline `_payload_repr` — renames key, not value | **High** | [garrison_audit.py:118-119](open-webui/pipelines/garrison_audit.py#L118) |
-| F-08 | Pipeline OIDC checks trust caller-supplied claims — no signature verification | **Medium** | [garrison_audit.py:73](open-webui/pipelines/garrison_audit.py#L73) |
-| F-09 | Spawn depth enforcement relies on a caller-supplied header | **Medium** | [security.py:101](tool-server/app/security.py#L101) |
-| F-10 | OTel collector exports only to debug stdout — full audit payloads in container logs | **Medium** | [collector.yaml:11](config/otel/collector.yaml#L11) |
-| F-11 | Dynamic secret check writes plaintext DB creds to `/tmp` with no cleanup | **Medium** | [vault-dynamic-secrets-check.sh:96](scripts/vault-dynamic-secrets-check.sh#L96) |
-| F-12 | Containers run as root — no `USER` directive in either Dockerfile | **Medium** | [tool-server/Dockerfile](tool-server/Dockerfile), [beeai-runtime/Dockerfile](beeai-runtime/Dockerfile) |
-| F-13 | Silent audit loss — `insert_one` failure swallowed with bare `except: pass` | **Medium** | [main.py:164](tool-server/app/main.py#L164) |
-| F-14 | Fluent Bit `Read_from_Head: true` produces duplicate audit records on restart | **Low** | [fluent-bit.conf](config/fluent-bit/fluent-bit.conf) |
-| F-15 | Audit ingest token comparison uses `!=` — not constant-time | **Low** | [main.py:188](tool-server/app/main.py#L188) |
-| F-16 | Whitespace-only query bypasses `min_length` and dumps all docs | **Low** | [main.py:593](tool-server/app/main.py#L593) |
-| F-17 | `_spawn_with_auth` retry loop has no backoff delay | **Low** | [main.py:401](tool-server/app/main.py#L401) |
-| F-18 | Bootstrap has no Vault readiness wait — fails on slow machines | **Low** | [bootstrap.sh](scripts/bootstrap.sh), [vault-bootstrap.sh:46](scripts/vault-bootstrap.sh#L46) |
-| F-19 | Credentials passed via `curl -d` flag — visible in process listings | **Low** | [vault-policy-check.sh](scripts/vault-policy-check.sh) |
-| F-20 | nginx access/error logs appear committed to the repository | **Low** | [logs/nginx/](logs/nginx/) |
-| F-21 | Base images not pinned to digests — silent drift possible | **Low** | [tool-server/Dockerfile](tool-server/Dockerfile) |
+| F-01 | Vault root token is the steady-state runtime credential for `tool-server` | **Critical** | [`compose.yaml:128`](https://github.com/mcindi/project-garrison/blob/main/compose.yaml#L128) |
+| F-02 | SSRF via `/tools/fetch` — no host/range allowlist, nginx proxies to any destination | **Critical** | [`main.py:259`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L259), [`nginx.conf:19`](https://github.com/mcindi/project-garrison/blob/main/config/nginx/nginx.conf#L19) |
+| F-03 | `/tools/search` corpus is fully caller-controlled — cross-collection enumeration | **High** | [`main.py:373`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L373), [`main.py:598`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L598) |
+| F-04 | Hardcoded weak credentials on all data services, all bound `0.0.0.0` | **High** | [`compose.yaml:6`](https://github.com/mcindi/project-garrison/blob/main/compose.yaml#L6) |
+| F-05 | Keycloak OIDC client secret hardcoded in bootstrap script | **High** | [`keycloak-bootstrap.sh`](https://github.com/mcindi/project-garrison/blob/main/scripts/keycloak-bootstrap.sh) |
+| F-06 | Vault runs in `-dev` mode — no TLS, no persistence, unsealed always | **High** | [`compose.yaml:30`](https://github.com/mcindi/project-garrison/blob/main/compose.yaml#L30) |
+| F-07 | Broken redaction in pipeline `_payload_repr` — renames key, not value | **High** | [`garrison_audit.py:118`](https://github.com/mcindi/project-garrison/blob/main/open-webui/pipelines/garrison_audit.py#L118) |
+| F-08 | Pipeline OIDC checks trust caller-supplied claims — no signature verification | **Medium** | [`garrison_audit.py:73`](https://github.com/mcindi/project-garrison/blob/main/open-webui/pipelines/garrison_audit.py#L73) |
+| F-09 | Spawn depth enforcement relies on a caller-supplied header | **Medium** | [`security.py:101`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/security.py#L101) |
+| F-10 | OTel collector exports only to debug stdout — full audit payloads in container logs | **Medium** | [`collector.yaml:11`](https://github.com/mcindi/project-garrison/blob/main/config/otel/collector.yaml#L11) |
+| F-11 | Dynamic secret check writes plaintext DB creds to `/tmp` with no cleanup | **Medium** | [`vault-dynamic-secrets-check.sh:96`](https://github.com/mcindi/project-garrison/blob/main/scripts/vault-dynamic-secrets-check.sh#L96) |
+| F-12 | Containers run as root — no `USER` directive in either Dockerfile | **Medium** | [`tool-server/Dockerfile`](https://github.com/mcindi/project-garrison/blob/main/tool-server/Dockerfile) |
+| F-13 | Silent audit loss — `insert_one` failure swallowed with bare `except: pass` | **Medium** | [`main.py:164`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L164) |
+| F-14 | Fluent Bit `Read_from_Head: true` produces duplicate audit records on restart | **Low** | [`fluent-bit.conf`](https://github.com/mcindi/project-garrison/blob/main/config/fluent-bit/fluent-bit.conf) |
+| F-15 | Audit ingest token comparison uses `!=` — not constant-time | **Low** | [`main.py:188`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L188) |
+| F-16 | Whitespace-only query bypasses `min_length` and dumps all docs | **Low** | [`main.py:593`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L593) |
+| F-17 | `_spawn_with_auth` retry loop has no backoff delay | **Low** | [`main.py:401`](https://github.com/mcindi/project-garrison/blob/main/tool-server/app/main.py#L401) |
+| F-18 | Bootstrap has no Vault readiness wait — fails on slow machines | **Low** | [`bootstrap.sh`](https://github.com/mcindi/project-garrison/blob/main/scripts/bootstrap.sh), [`vault-bootstrap.sh:46`](https://github.com/mcindi/project-garrison/blob/main/scripts/vault-bootstrap.sh#L46) |
+| F-19 | Credentials passed via `curl -d` flag — visible in process listings | **Low** | [`vault-policy-check.sh`](https://github.com/mcindi/project-garrison/blob/main/scripts/vault-policy-check.sh) |
+| F-20 | nginx access/error logs appear committed to the repository | **Low** | [`logs/nginx/`](https://github.com/mcindi/project-garrison/tree/main/logs/nginx/) |
+| F-21 | Base images not pinned to digests — silent drift possible | **Low** | [`tool-server/Dockerfile`](https://github.com/mcindi/project-garrison/blob/main/tool-server/Dockerfile) |
 
 ---
 
@@ -355,65 +355,3 @@ The three items that should be addressed before any networked deployment:
 2. **F-02:** Add a strict allowlist to `_validate_fetch_url` — reject RFC1918 ranges, link-local (`169.254.0.0/16`), loopback, and all Docker-internal service hostnames. Separately, replace nginx's wildcard `proxy_pass` with an explicit allowlist of permitted external domains.
 
 3. **F-03:** Gate `/tools/search` corpus values against an allowlist of permitted database/collection names rather than splitting raw user input into Mongo coordinates.
-
-Remediation Assessment:
-
-**Remediation Matrix**
-
-| ID | Severity | Summary | Root Cause | Fix | Is the fix likely to break other things? | Risk |
-|---|---|---|---|---|---|---|
-| F-01 | Critical | Tool-server uses Vault root token at runtime | Privilege separation not implemented for service identity | Create dedicated tool-server AppRole/token role with least-privilege policies, short TTL, renewal, and revocation; remove root token from runtime env | Medium | Full Vault compromise if app host/process is compromised |
-| F-02 | Critical | Fetch endpoint plus wildcard forward proxy enables SSRF to arbitrary hosts | URL validation checks only scheme/host presence; proxy forwards to caller-chosen host | Add strict egress allowlist, block private/link-local/loopback ranges, deny internal service hostnames, restrict methods/ports, enforce DNS/IP revalidation | High | Access to internal services/metadata and potential secret exfiltration |
-| F-03 | High | Search corpus is caller-controlled and can enumerate arbitrary DB/collection | Dynamic corpus is mapped directly to Mongo coordinates | Replace free-form corpus with allowlisted logical corpora mapped server-side; add authorization checks per corpus | Medium | Unauthorized data exposure across collections |
-| F-04 | High | Weak static credentials and broad host port exposure across data services | Dev defaults persisted as steady-state config | Move secrets to runtime generation/secret store, rotate defaults, remove unnecessary host port publishing in secure profile | Medium | Credential stuffing/lateral movement from local or LAN access |
-| F-05 | High | Keycloak OIDC client secret is hardcoded in bootstrap defaults | Static bootstrap convenience secret | Generate secret per environment, store in secret manager, rotate periodically, avoid checked-in default | Low | Client impersonation/token abuse if secret leaks |
-| F-06 | High | Vault runs in dev mode | Development mode kept in main compose profile | Switch to server mode with persistent storage, auto-unseal strategy, TLS, and hardened listener config | Medium | No TLS and weak operational guarantees for secrets service |
-| F-07 | High | Pipeline redaction changes key names, not secret values | String replacement implemented against field names | Use value-aware JSON redaction with path/key rules and regex for bearer tokens; add unit tests for redaction cases | Low | Sensitive payload values still logged |
-| F-08 | Medium | Pipeline authz trusts provided claims without token signature verification | Trust boundary delegated to upstream caller object | Verify JWT signature, issuer, audience, expiry directly in pipeline or rely only on trusted signed headers from hardened middleware | Medium | Forged claims can pass authorization in misconfigured paths |
-| F-09 | Medium | Spawn depth is caller-supplied header | Security control state carried in mutable request metadata | Bind depth and lineage to token metadata or signed server-issued context; ignore client-provided depth for enforcement | Medium | Guardrail bypass for spawn tree depth controls |
-| F-10 | Medium | OTel collector exports detailed logs to debug stdout | Telemetry pipeline configured for verbose debug sink | Replace debug exporter with secure backend, reduce verbosity, mask payload attributes, and set retention/access controls | Low | Sensitive data exposure in container logs |
-| F-11 | Medium | Dynamic secret check script writes plaintext creds to temp files | Script writes response bodies to predictable temp paths and keeps them | Use secure temp files with restricted perms, avoid writing secrets when possible, and shred/cleanup on exit trap | Low | Local secret leakage on host filesystem |
-| F-12 | Medium | Runtime containers run as root | Dockerfiles lack non-root user and hardening defaults | Add non-root user/group, chown working dirs, drop capabilities, set read-only root fs where possible | Medium | Higher impact from container escape or app compromise |
-| F-13 | Medium | Audit write failure is swallowed silently | Bare exception pass in audit persistence path | Log structured error, emit metric/counter, add retry/backoff or durable queue fallback | Low | Undetected audit gaps reduce forensic reliability |
-| F-14 | Low | Fluent Bit can duplicate records after restart | Tail input reads from head and dedupe strategy absent | Enable offset state management and/or dedupe key at ingest, adjust startup/read policy | Low | Noise and duplicate audit records |
-| F-15 | Low | Ingest token compared with normal string equality | Secret comparison primitive not hardened | Use constant-time comparison primitive for token checks | Very Low | Minor timing side-channel risk |
-| F-16 | Low | Whitespace-only query returns broad results | Validation checks non-empty raw string, not semantic content | Trim and reject empty/whitespace-only query, require tokenized query terms | Low | Unintended broad data retrieval |
-| F-17 | Low | Spawn retry loop has no backoff | Tight retry logic without delay/jitter | Add exponential backoff with jitter and circuit-breaker thresholds | Low | Amplified load during dependency outages |
-| F-18 | Low | Bootstrap may race Vault readiness | No readiness gate before first Vault API calls | Add wait loop/health probe for Vault before bootstrap actions; keep bounded timeout | Very Low | Flaky bootstrap on slow systems |
-| F-19 | Low | Sensitive payloads are passed in command arguments in scripts | Use of curl data flags with secret-bearing inline values | Pass payload via stdin/file descriptor, minimize process-arg exposure, avoid echoing secrets | Low | Local process list leakage |
-| F-20 | Low | Nginx logs were flagged as committed, but current state indicates ignored files | Prior state likely changed; current ignore rules cover logs | Keep logs ignored, add pre-commit check for log artifacts, purge history only if sensitive logs were ever committed | Very Low | Minimal current risk; verify git history separately |
-| F-21 | Low | Base images are tag-pinned, not digest-pinned | Supply chain reproducibility controls incomplete | Pin image digests, add scheduled digest refresh workflow and vulnerability scanning gates | Low | Silent upstream image drift |
-
-**How to use this matrix**
-
-**Remediation Matrix**
-
-| ID | Severity | Summary | Root Cause | Fix | Is the fix likely to break other things? | Risk |
-|---|---|---|---|---|---|---|
-| F-01 | Critical | Tool-server uses Vault root token at runtime | Privilege separation not implemented for service identity | Create dedicated tool-server AppRole/token role with least-privilege policies, short TTL, renewal, and revocation; remove root token from runtime env | Medium | Full Vault compromise if app host/process is compromised |
-| F-02 | Critical | Fetch endpoint plus wildcard forward proxy enables SSRF to arbitrary hosts | URL validation checks only scheme/host presence; proxy forwards to caller-chosen host | Add strict egress allowlist, block private/link-local/loopback ranges, deny internal service hostnames, restrict methods/ports, enforce DNS/IP revalidation | High | Access to internal services/metadata and potential secret exfiltration |
-| F-03 | High | Search corpus is caller-controlled and can enumerate arbitrary DB/collection | Dynamic corpus is mapped directly to Mongo coordinates | Replace free-form corpus with allowlisted logical corpora mapped server-side; add authorization checks per corpus | Medium | Unauthorized data exposure across collections |
-| F-04 | High | Weak static credentials and broad host port exposure across data services | Dev defaults persisted as steady-state config | Move secrets to runtime generation/secret store, rotate defaults, remove unnecessary host port publishing in secure profile | Medium | Credential stuffing/lateral movement from local or LAN access |
-| F-05 | High | Keycloak OIDC client secret is hardcoded in bootstrap defaults | Static bootstrap convenience secret | Generate secret per environment, store in secret manager, rotate periodically, avoid checked-in default | Low | Client impersonation/token abuse if secret leaks |
-| F-06 | High | Vault runs in dev mode | Development mode kept in main compose profile | Switch to server mode with persistent storage, auto-unseal strategy, TLS, and hardened listener config | Medium | No TLS and weak operational guarantees for secrets service |
-| F-07 | High | Pipeline redaction changes key names, not secret values | String replacement implemented against field names | Use value-aware JSON redaction with path/key rules and regex for bearer tokens; add unit tests for redaction cases | Low | Sensitive payload values still logged |
-| F-08 | Medium | Pipeline authz trusts provided claims without token signature verification | Trust boundary delegated to upstream caller object | Verify JWT signature, issuer, audience, expiry directly in pipeline or rely only on trusted signed headers from hardened middleware | Medium | Forged claims can pass authorization in misconfigured paths |
-| F-09 | Medium | Spawn depth is caller-supplied header | Security control state carried in mutable request metadata | Bind depth and lineage to token metadata or signed server-issued context; ignore client-provided depth for enforcement | Medium | Guardrail bypass for spawn tree depth controls |
-| F-10 | Medium | OTel collector exports detailed logs to debug stdout | Telemetry pipeline configured for verbose debug sink | Replace debug exporter with secure backend, reduce verbosity, mask payload attributes, and set retention/access controls | Low | Sensitive data exposure in container logs |
-| F-11 | Medium | Dynamic secret check script writes plaintext creds to temp files | Script writes response bodies to predictable temp paths and keeps them | Use secure temp files with restricted perms, avoid writing secrets when possible, and shred/cleanup on exit trap | Low | Local secret leakage on host filesystem |
-| F-12 | Medium | Runtime containers run as root | Dockerfiles lack non-root user and hardening defaults | Add non-root user/group, chown working dirs, drop capabilities, set read-only root fs where possible | Medium | Higher impact from container escape or app compromise |
-| F-13 | Medium | Audit write failure is swallowed silently | Bare exception pass in audit persistence path | Log structured error, emit metric/counter, add retry/backoff or durable queue fallback | Low | Undetected audit gaps reduce forensic reliability |
-| F-14 | Low | Fluent Bit can duplicate records after restart | Tail input reads from head and dedupe strategy absent | Enable offset state management and/or dedupe key at ingest, adjust startup/read policy | Low | Noise and duplicate audit records |
-| F-15 | Low | Ingest token compared with normal string equality | Secret comparison primitive not hardened | Use constant-time comparison primitive for token checks | Very Low | Minor timing side-channel risk |
-| F-16 | Low | Whitespace-only query returns broad results | Validation checks non-empty raw string, not semantic content | Trim and reject empty/whitespace-only query, require tokenized query terms | Low | Unintended broad data retrieval |
-| F-17 | Low | Spawn retry loop has no backoff | Tight retry logic without delay/jitter | Add exponential backoff with jitter and circuit-breaker thresholds | Low | Amplified load during dependency outages |
-| F-18 | Low | Bootstrap may race Vault readiness | No readiness gate before first Vault API calls | Add wait loop/health probe for Vault before bootstrap actions; keep bounded timeout | Very Low | Flaky bootstrap on slow systems |
-| F-19 | Low | Sensitive payloads are passed in command arguments in scripts | Use of curl data flags with secret-bearing inline values | Pass payload via stdin/file descriptor, minimize process-arg exposure, avoid echoing secrets | Low | Local process list leakage |
-| F-20 | Low | Nginx logs were flagged as committed, but current state indicates ignored files | Prior state likely changed; current ignore rules cover logs | Keep logs ignored, add pre-commit check for log artifacts, purge history only if sensitive logs were ever committed | Very Low | Minimal current risk; verify git history separately |
-| F-21 | Low | Base images are tag-pinned, not digest-pinned | Supply chain reproducibility controls incomplete | Pin image digests, add scheduled digest refresh workflow and vulnerability scanning gates | Low | Silent upstream image drift |
-
-**How to use this matrix**
-
-1. Start with F-01, F-02, F-03 as the first hardening sprint.
-2. Bundle F-07, F-10, F-13 as an audit-integrity sprint.
-3. Bundle F-12, F-21 with platform hardening and CI policy gates.
