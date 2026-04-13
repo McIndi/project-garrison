@@ -5,6 +5,18 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
 VAULT_TOKEN="${VAULT_TOKEN:-root}"
 
+ci_curl() {
+  local url="$1"
+  shift || true
+  curl --fail --show-error --silent \
+    --retry 10 \
+    --retry-delay 2 \
+    --retry-all-errors \
+    --connect-timeout 5 \
+    --max-time 20 \
+    "$@" "$url"
+}
+
 if [[ -n "${PYTHON_CMD:-}" ]]; then
   PYTHON_BIN="${PYTHON_CMD}"
 elif [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
@@ -14,8 +26,8 @@ else
 fi
 
 echo "[1/4] Ensure audit-generating operations run"
-curl -fsS -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}/v1/sys/health" >/dev/null
-curl -fsS -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}/v1/auth/token/lookup-self" >/dev/null
+ci_curl "${VAULT_ADDR}/v1/sys/health" -H "X-Vault-Token: ${VAULT_TOKEN}" >/dev/null
+ci_curl "${VAULT_ADDR}/v1/auth/token/lookup-self" -H "X-Vault-Token: ${VAULT_TOKEN}" >/dev/null
 
 BASE_URL="${BASE_URL:-http://127.0.0.1:8080}"
 HEADERS=(
@@ -27,7 +39,7 @@ HEADERS=(
   -H "x-root-orchestrator-id: agent-root"
   -H "Content-Type: application/json"
 )
-curl -fsS -X POST "${BASE_URL}/tools/fetch" "${HEADERS[@]}" \
+ci_curl "${BASE_URL}/tools/fetch" -X POST "${HEADERS[@]}" \
   -d '{"url":"http://example.com","method":"GET"}' >/dev/null
 
 echo "[2/4] Wait for Fluent Bit flush"

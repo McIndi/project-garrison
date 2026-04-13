@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+CI_BOOTSTRAP_RETRIES="${CI_BOOTSTRAP_RETRIES:-2}"
+
+if command -v docker >/dev/null 2>&1; then
+  COMPOSE_CMD=(docker compose)
+elif command -v podman >/dev/null 2>&1; then
+  COMPOSE_CMD=(podman compose)
+else
+  COMPOSE_CMD=()
+fi
 
 if [[ -n "${PYTHON_CMD:-}" ]]; then
   PYTHON_BIN="${PYTHON_CMD}"
@@ -12,17 +21,57 @@ else
 fi
 
 cleanup() {
-  if command -v docker >/dev/null 2>&1; then
-    docker compose -f "$ROOT_DIR/compose.yaml" down -v --remove-orphans || true
-  elif command -v podman >/dev/null 2>&1; then
-    podman compose -f "$ROOT_DIR/compose.yaml" down -v --remove-orphans || true
+  if [[ "${#COMPOSE_CMD[@]}" -gt 0 ]]; then
+    "${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" down -v --remove-orphans || true
   fi
 }
+
+dump_runtime_diagnostics() {
+  echo "Smoke script failed. Dumping container diagnostics..."
+  if command -v docker >/dev/null 2>&1; then
+    docker ps -a || true
+  fi
+  if command -v podman >/dev/null 2>&1; then
+    podman ps -a || true
+  fi
+  if [[ "${#COMPOSE_CMD[@]}" -gt 0 ]]; then
+    "${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" ps || true
+    "${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" logs || true
+  fi
+}
+
+on_fail() {
+  local line_no="$1"
+  local cmd="$2"
+  echo "[ERROR] ci-smoke failed at line ${line_no}: ${cmd}" >&2
+  dump_runtime_diagnostics
+}
+
+run_with_retry() {
+  local label="$1"
+  shift
+  local attempt
+  for attempt in $(seq 1 "$CI_BOOTSTRAP_RETRIES"); do
+    echo "Running ${label} (attempt ${attempt}/${CI_BOOTSTRAP_RETRIES})"
+    if "$@"; then
+      return 0
+    fi
+    if [[ "$attempt" -lt "$CI_BOOTSTRAP_RETRIES" ]]; then
+      echo "${label} failed, retrying after cleanup..."
+      cleanup
+      sleep 3
+    fi
+  done
+  echo "${label} failed after ${CI_BOOTSTRAP_RETRIES} attempts"
+  return 1
+}
+
+trap 'on_fail "$LINENO" "$BASH_COMMAND"' ERR
 trap cleanup EXIT
 
 cd "$ROOT_DIR"
 
-bash scripts/bootstrap.sh
+run_with_retry "bootstrap" bash scripts/bootstrap.sh
 
 if [[ "${CI_INSTALL_DEPS:-false}" == "true" ]]; then
   "$PYTHON_BIN" -m pip install --upgrade pip
