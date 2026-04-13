@@ -1,0 +1,138 @@
+# Project Garrison
+
+Project Garrison is an auditable, policy-driven agent runtime. It separates human identity from agent identity, routes all agent operations through a policy chokepoint, and validates secret lifecycle controls end to end.
+
+## Current Implementation Snapshot
+
+- Human interaction is through Open WebUI.
+- Runtime control is through tool-server.
+- Agent execution is through a BeeAI runtime stub service.
+- Vault is used for token lookup, AppRole issuance, and transit encryption/decryption.
+- Valkey backs shared memory and registry data.
+- MongoDB stores audit events and per-agent collections.
+- OpenTelemetry Collector is present and currently exports to debug output in local mode.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Human Layer
+      U[User]
+      OW[Open WebUI + garrison_audit pipeline]
+    end
+
+    subgraph Control Layer
+      TS[tool-server]
+      VA[Vault]
+      KC[Keycloak]
+    end
+
+    subgraph Runtime + Data Layer
+      BR[beeai-runtime stub]
+      VK[Valkey]
+      MG[MongoDB]
+      OT[OTel Collector]
+    end
+
+    U --> OW
+    OW -->|POST /orchestrate| TS
+    TS -->|spawn / terminate| BR
+    TS -->|token lookup + AppRole + transit| VA
+    TS -->|memory / registry| VK
+    TS -->|audit + artifacts + handoffs| MG
+    OW -. planned telemetry wiring .-> OT
+    TS -. planned telemetry wiring .-> OT
+
+    OW -. deployed alongside .-> KC
+```
+
+Notes about accuracy:
+
+- Keycloak is deployed in compose, but Open WebUI local config currently has WEBUI_AUTH set to False.
+- OTel collector local config currently exports to debug, and current app code paths do not emit OTLP directly.
+- Nginx and Fluent Bit are part of the broader spec direction but are not currently in local compose.
+
+## Request and Delegation Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant OpenWebUI as Open WebUI Pipeline
+    participant ToolServer as tool-server
+    participant Vault
+    participant BeeAI as beeai-runtime
+    participant Valkey
+    participant Mongo
+
+    User->>OpenWebUI: Submit request
+    OpenWebUI->>ToolServer: POST /orchestrate (headers + request_text)
+    ToolServer->>Vault: auth/token/lookup-self (if enabled)
+    ToolServer->>Vault: AppRole role-id + secret-id + login
+    Vault-->>ToolServer: role_id, secret_id, token_accessor
+    ToolServer->>BeeAI: POST /spawn
+    BeeAI-->>ToolServer: agent_id
+    ToolServer->>Valkey: registry_upsert(agent_id, metadata)
+    ToolServer->>Mongo: provision agent collections + audit write
+    ToolServer-->>OpenWebUI: workflow_id, status, spawned_agent_id
+    OpenWebUI-->>User: delegated workflow accepted
+```
+
+## Runtime APIs
+
+Tool-server primary endpoints:
+
+- Health: GET /health
+- Memory: GET/POST/DELETE /tools/memory/{key}
+- Scratch: GET/POST/DELETE /tools/scratch/{key}
+- Registry: GET /tools/registry
+- Fetch: POST /tools/fetch
+- Summarize: POST /tools/summarize
+- Transit encrypt/decrypt: POST /tools/encrypt, POST /tools/decrypt
+- Search: POST /tools/search
+- Handoff: POST /tools/handoff
+- Spawn lifecycle: POST /tools/spawn, DELETE /tools/spawn/{agent_id}
+- Orchestration bridge: POST /orchestrate
+
+## Security and Policy Model
+
+- All runtime calls require Bearer auth and agent identity headers.
+- Vault token lookup is enabled in compose via TOOL_SERVER_REQUIRE_TOKEN_LOOKUP=true.
+- Spawn/terminate is orchestrator-only.
+- Spawn depth is capped by TOOL_SERVER_SPAWN_MAX_DEPTH (currently 2).
+- Nested spawn/delete is constrained by root_orchestrator_id ownership checks.
+- Human session propagation is enforced through x-human-session-id and orchestration payloads.
+
+## Infrastructure as Code Status
+
+Terraform/OpenTofu currently provides a validated module contract layer in spec order under modules and terraform.
+
+- Root composition: terraform/main.tf
+- Shared variables: terraform/variables.tf
+- Contract outputs: terraform/outputs.tf
+
+Current Phase 7 posture:
+
+- CI smoke workflow is active.
+- Terraform/OpenTofu init and validate are active.
+- Module contracts are wired.
+- Provider-backed resource implementation is the next increment.
+
+## Operations
+
+Primary commands from repository root:
+
+- Full local bootstrap and verification: bash scripts/bootstrap.sh
+- Single command CI-equivalent smoke run: bash scripts/ci-smoke.sh
+- Tool-server tests: cd tool-server && python -m pytest -q tests
+- Pipeline tests: cd open-webui/pipelines && python -m pytest -q test_garrison_audit.py
+
+See detailed operational guidance in OPERATIONS-RUNBOOK.md.
+
+## Documentation Site
+
+Project documentation source lives in docs and is published through GitHub Pages by workflow .github/workflows/docs-pages.yml.
+
+Local preview after installing MkDocs:
+
+- mkdocs serve
+- mkdocs build --strict

@@ -1,0 +1,75 @@
+name: Docs Quality
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "README.md"
+      - "OPERATIONS-RUNBOOK.md"
+      - "docs/**"
+      - "mkdocs.yml"
+      - "scripts/lint-mermaid.mjs"
+      - ".markdownlint-cli2.jsonc"
+      - ".github/workflows/docs-quality.yml"
+  push:
+    branches: ["main", "master"]
+    paths:
+      - "README.md"
+      - "OPERATIONS-RUNBOOK.md"
+      - "docs/**"
+      - "mkdocs.yml"
+      - "scripts/lint-mermaid.mjs"
+      - ".markdownlint-cli2.jsonc"
+      - ".github/workflows/docs-quality.yml"
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Markdown lint
+        uses: DavidAnson/markdownlint-cli2-action@v20
+        with:
+          globs: |
+            README.md
+            OPERATIONS-RUNBOOK.md
+            docs/**/*.md
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Mermaid CLI
+        run: npm install --no-save @mermaid-js/mermaid-cli
+
+      - name: Mermaid syntax lint
+        run: node scripts/lint-mermaid.mjs
+
+      - name: Link check
+        uses: lycheeverse/lychee-action@v2
+        with:
+          fail: true
+          args: >-
+            --no-progress
+            --include-fragments
+            --accept 200,206,301,302,429
+            README.md OPERATIONS-RUNBOOK.md docs/**/*.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install MkDocs dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install mkdocs mkdocs-material pymdown-extensions
+
+      - name: Build docs (strict)
+        run: mkdocs build --strict

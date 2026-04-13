@@ -1,3 +1,10 @@
+site/
+node_modules/
+dist/
+build/
+coverage/
+logs/
+*.log
 # ------------------------------
 # Python (GitHub-style baseline)
 # ------------------------------
