@@ -39,29 +39,29 @@ flowchart TB
 ## Runtime Responsibilities
 
 - Open WebUI:
-    - Human request entry point.
-    - Pipeline hook that can call POST /orchestrate.
+  - Human request entry point.
+  - Pipeline hook that can call POST /orchestrate.
 - tool-server:
-    - Auth and policy enforcement.
-    - Memory/scratch/search/fetch/summarize/encrypt/decrypt/handoff APIs.
-    - Spawn and terminate governance.
-    - Audit event emission.
+  - Auth and policy enforcement.
+  - Memory/scratch/search/fetch/summarize/encrypt/decrypt/handoff APIs.
+  - Spawn and terminate governance.
+  - Audit event emission.
 - beeai-runtime (stub):
-    - Spawn and terminate handlers with in-memory agent map.
+  - Spawn and terminate handlers with in-memory agent map.
 - Vault:
-    - Token lookup, AppRole role/secret issuance, transit operations.
+  - Token lookup, AppRole role/secret issuance, transit operations.
 - Nginx:
-    - Outbound fetch proxy used by tool-server.
+  - Outbound fetch proxy used by tool-server.
 - Fluent Bit:
-    - Tails Vault audit and Nginx access logs.
-    - Forwards records to tool-server internal ingest endpoints.
+  - Tails Vault audit and Nginx access logs.
+  - Forwards records to tool-server internal ingest endpoints.
 - Valkey:
-    - Shared memory and registry data.
+  - Shared memory and registry data.
 - MongoDB:
-    - Stores tool-server audit events and ingested Vault/Nginx logs.
+  - Stores tool-server audit events and ingested Vault/Nginx logs.
 - OTel Collector:
-    - Deployed in compose and configured with OTLP receiver plus debug exporter.
-    - tool-server audit middleware emits OTLP logs to collector.
+  - Deployed in compose and configured with OTLP receiver plus debug exporter.
+  - tool-server audit middleware emits OTLP logs to collector.
 
 ## Design Constraints Enforced in Code
 

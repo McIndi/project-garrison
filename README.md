@@ -120,13 +120,13 @@ Internal endpoints used by local audit pipeline:
 ## Telemetry Settings
 
 - TOOL_SERVER_OTEL_ENABLED (default: true)
-- TOOL_SERVER_OTEL_LOGS_ENDPOINT (default: http://otel-collector:4318/v1/logs)
+- TOOL_SERVER_OTEL_LOGS_ENDPOINT (default: <http://otel-collector:4318/v1/logs>)
 - TOOL_SERVER_OTEL_TIMEOUT_MS (default: 2000)
 
 Open WebUI pipeline settings:
 
 - GARRISON_OTEL_ENABLED (default: true)
-- GARRISON_OTEL_LOGS_ENDPOINT (default: http://otel-collector:4318/v1/logs)
+- GARRISON_OTEL_LOGS_ENDPOINT (default: <http://otel-collector:4318/v1/logs>)
 - GARRISON_OTEL_TIMEOUT_SECONDS (default: 2)
 
 ## Infrastructure as Code Status
