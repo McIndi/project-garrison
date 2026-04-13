@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 
 from .config import settings
 from .models import (
@@ -127,6 +127,73 @@ async def audit_http_request(request, call_next):
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/internal/audit/ingest/{source}")
+async def ingest_audit_events(source: str, request: Request, x_audit_ingest_token: str | None = Header(default=None)) -> dict[str, int]:
+    if settings.audit_ingest_token and x_audit_ingest_token != settings.audit_ingest_token:
+        raise HTTPException(status_code=403, detail="Invalid audit ingest token")
+
+    if source not in {"vault", "nginx"}:
+        raise HTTPException(status_code=400, detail="Unsupported audit source")
+
+    raw = await request.body()
+    text = raw.decode("utf-8", errors="replace").strip()
+    if not text:
+        return {"ingested": 0}
+
+    records: list[dict] = []
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            records = [parsed]
+        elif isinstance(parsed, list):
+            records = [item for item in parsed if isinstance(item, dict)]
+    except json.JSONDecodeError:
+        # fluent-bit json_lines output posts one record per line.
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                parsed_line = json.loads(line)
+                if isinstance(parsed_line, dict):
+                    records.append(parsed_line)
+            except json.JSONDecodeError:
+                records.append({"log": line})
+
+    docs: list[dict] = []
+    for record in records:
+        log_value = record.get("log")
+        parsed_log: dict | None = None
+        if isinstance(log_value, str):
+            try:
+                candidate = json.loads(log_value)
+                if isinstance(candidate, dict):
+                    parsed_log = candidate
+            except json.JSONDecodeError:
+                parsed_log = None
+
+        docs.append(
+            {
+                "source": source,
+                "ingested_at": storage.utc_now_iso(),
+                "record": record,
+                "parsed_log": parsed_log,
+            }
+        )
+
+    if not docs:
+        return {"ingested": 0}
+
+    if not settings.use_inmemory:
+        try:
+            client = provisioning._mongo_client()
+            client["garrison_audit"][source].insert_many(docs)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503, detail=f"Audit ingest storage unavailable: {exc}") from exc
+
+    return {"ingested": len(docs)}
 
 
 def _scratch_key(agent_id: str, key: str) -> str:

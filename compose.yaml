@@ -28,6 +28,8 @@ services:
       VAULT_DEV_ROOT_TOKEN_ID: root
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
     command: vault server -dev -dev-root-token-id=root
+    volumes:
+      - vault-audit-logs:/vault/logs:U
     ports:
       - "8200:8200"
     networks:
@@ -49,6 +51,19 @@ services:
       - ./logs/nginx:/var/log/nginx:Z
     ports:
       - "8088:8088"
+    networks:
+      - data-net
+
+  fluent-bit:
+    image: docker.io/fluent/fluent-bit:3.1
+    volumes:
+      - ./config/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro,Z
+      - vault-audit-logs:/logs/vault:ro
+      - ./logs/nginx:/logs/nginx:ro,Z
+    depends_on:
+      - vault
+      - nginx
+      - tool-server
     networks:
       - data-net
 
@@ -108,6 +123,7 @@ services:
       TOOL_SERVER_SPAWN_MAX_DEPTH: "2"
       TOOL_SERVER_FETCH_PROXY_URL: http://nginx:8088
       TOOL_SERVER_FETCH_REQUIRE_PROXY: "true"
+      TOOL_SERVER_AUDIT_INGEST_TOKEN: local-audit-ingest-token
     depends_on:
       - valkey
       - beeai-runtime
@@ -125,3 +141,6 @@ networks:
     driver: bridge
   data-net:
     driver: bridge
+
+volumes:
+  vault-audit-logs:

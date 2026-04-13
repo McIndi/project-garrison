@@ -398,7 +398,7 @@ services:
   gitea:        # VCS for code agents and skill docs
   ollama:       # local model for summarization tool
   otel-collector: # receives BeeAI and Open WebUI telemetry; writes normalized events to mongo
-  fluent-bit:   # log collection — reads Podman socket via volume mount, writes to mongo
+  fluent-bit:   # log collection — tails Vault/Nginx logs and posts events to tool-server internal ingest
 
   # agent-net + data-net bridge
   tool-server:  # exposes nine tools to agents; the only bridge service across both networks

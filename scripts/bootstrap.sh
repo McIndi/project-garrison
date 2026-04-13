@@ -16,7 +16,7 @@ fi
 
 echo "Starting core stack..."
 "${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d --build \
-	valkey mongo vault beeai-runtime nginx otel-collector tool-server keycloak open-webui
+	valkey mongo vault beeai-runtime nginx fluent-bit otel-collector tool-server keycloak open-webui
 
 echo "Configuring Vault baseline for dynamic/auditable secrets..."
 "$ROOT_DIR/scripts/vault-bootstrap.sh"
@@ -32,6 +32,9 @@ echo "Running Vault dynamic secrets lifecycle checks..."
 
 echo "Running Nginx proxy readiness checks..."
 bash "$ROOT_DIR/scripts/nginx-readiness.sh"
+
+echo "Running audit pipeline checks (Vault + Nginx -> Fluent Bit -> MongoDB)..."
+bash "$ROOT_DIR/scripts/audit-pipeline-check.sh"
 
 echo "Core stack started. Running sanity check..."
 "$ROOT_DIR/scripts/sanity-check.sh"

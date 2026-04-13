@@ -20,6 +20,7 @@ class Settings:
     fetch_proxy_url = os.getenv("TOOL_SERVER_FETCH_PROXY_URL", "")
     fetch_require_proxy = os.getenv("TOOL_SERVER_FETCH_REQUIRE_PROXY", "true").lower() == "true"
     audit_payload_mode = os.getenv("GARRISON_AUDIT_PAYLOAD_MODE", "full")
+    audit_ingest_token = os.getenv("TOOL_SERVER_AUDIT_INGEST_TOKEN", "")
     class_token_ttl = {
         "orchestrator": "4h",
         "code": "2h",

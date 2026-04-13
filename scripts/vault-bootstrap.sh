@@ -44,7 +44,7 @@ echo "Configuring Vault baseline (audit, transit, approle, policies, roles, data
 
 # Enable file audit device if not already present.
 if ! api_get "/v1/sys/audit" | grep -q '"file/"'; then
-  api_post "/v1/sys/audit/file" '{"type":"file","options":{"file_path":"/tmp/garrison-vault-audit.log"}}'
+  api_post "/v1/sys/audit/file" '{"type":"file","options":{"file_path":"/vault/logs/audit.log"}}'
 fi
 
 # Enable AppRole auth mount if not already present.
