@@ -3,7 +3,12 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BASE_URL="${BASE_URL:-http://127.0.0.1:8080}"
-AUTH_BEARER_TOKEN="${AUTH_BEARER_TOKEN:-root}"
+AUTH_BEARER_TOKEN="${AUTH_BEARER_TOKEN:-}"
+
+if [[ -z "${AUTH_BEARER_TOKEN}" ]]; then
+  echo "[FAIL] AUTH_BEARER_TOKEN is required for tool-server fetch checks"
+  exit 1
+fi
 
 mkdir -p "$ROOT_DIR/logs/nginx"
 

@@ -4,6 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
 VAULT_TOKEN="${VAULT_TOKEN:-root}"
+AUTH_BEARER_TOKEN="${AUTH_BEARER_TOKEN:-}"
+
+if [[ -z "${AUTH_BEARER_TOKEN}" ]]; then
+  echo "AUTH_BEARER_TOKEN is required for audit-pipeline-check"
+  exit 1
+fi
 
 ci_curl() {
   local url="$1"
@@ -31,7 +37,7 @@ ci_curl "${VAULT_ADDR}/v1/auth/token/lookup-self" -H "X-Vault-Token: ${VAULT_TOK
 
 BASE_URL="${BASE_URL:-http://127.0.0.1:8080}"
 HEADERS=(
-  -H "Authorization: Bearer ${VAULT_TOKEN}"
+  -H "Authorization: Bearer ${AUTH_BEARER_TOKEN}"
   -H "x-agent-id: agent-root"
   -H "x-agent-class: orchestrator"
   -H "x-human-session-id: human-audit-001"

@@ -2,7 +2,12 @@
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
-AUTH_BEARER_TOKEN="${AUTH_BEARER_TOKEN:-root}"
+AUTH_BEARER_TOKEN="${AUTH_BEARER_TOKEN:-}"
+
+if [[ -z "${AUTH_BEARER_TOKEN}" ]]; then
+  echo "AUTH_BEARER_TOKEN is required for sanity-check"
+  exit 1
+fi
 
 ci_curl() {
   local url="$1"

@@ -38,6 +38,9 @@ TOOL_SERVER_AUDIT_INGEST_TOKEN="${TOOL_SERVER_AUDIT_INGEST_TOKEN}" \
 	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d --build \
 	valkey mongo vault beeai-runtime nginx fluent-bit otel-collector tool-server keycloak
 
+echo "Preparing Vault audit log path permissions..."
+"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" exec -T -u root vault sh -c 'mkdir -p /vault/logs && touch /vault/logs/audit.log && chown vault:vault /vault/logs /vault/logs/audit.log && chmod 0700 /vault/logs && chmod 0600 /vault/logs/audit.log' || true
+
 echo "Configuring Vault baseline for dynamic/auditable secrets..."
 "$ROOT_DIR/scripts/vault-bootstrap.sh"
 
@@ -58,6 +61,8 @@ echo "Starting Open WebUI with runtime-scoped orchestrate token..."
 TOOL_SERVER_AUDIT_INGEST_TOKEN="${TOOL_SERVER_AUDIT_INGEST_TOKEN}" \
 	GARRISON_ORCHESTRATE_BEARER_TOKEN="${OPENWEBUI_ORCH_TOKEN}" \
 	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d open-webui
+
+export AUTH_BEARER_TOKEN="${OPENWEBUI_ORCH_TOKEN}"
 
 echo "Running Vault readiness checks..."
 "$ROOT_DIR/scripts/vault-readiness.sh"
