@@ -12,6 +12,7 @@ Bootstrap includes:
 
 - Compose up and image build.
 - Vault baseline config.
+- Keycloak realm/client/role/group baseline config.
 - Runtime audit ingest token generation and injection for Fluent Bit/tool-server.
 - Open WebUI scoped orchestrate token issuance from Vault and Open WebUI startup with injected token.
 - Strict token metadata contract enforcement in tool-server (`agent_id`, `agent_class`).
@@ -22,6 +23,13 @@ Bootstrap includes:
 - Nginx proxy readiness checks.
 - Audit evidence checks (Vault + Nginx logs via Fluent Bit into MongoDB).
 - Runtime sanity checks.
+
+Run only Keycloak bootstrap + checks:
+
+```bash
+bash scripts/keycloak-bootstrap.sh
+bash scripts/keycloak-readiness.sh
+```
 
 Run only audit evidence checks:
 
@@ -53,6 +61,11 @@ Optional environment knobs:
 
 - PYTHON_CMD for explicit interpreter.
 - CI_INSTALL_DEPS=true to force dependency install.
+- KEYCLOAK_BASE_URL (default: http://127.0.0.1:8081)
+- KEYCLOAK_ADMIN_USER / KEYCLOAK_ADMIN_PASSWORD
+- KEYCLOAK_REALM (default: garrison)
+- KEYCLOAK_OPENWEBUI_CLIENT_ID / KEYCLOAK_OPENWEBUI_CLIENT_SECRET
+- KEYCLOAK_ORCHESTRATOR_ROLE / KEYCLOAK_ORCHESTRATOR_GROUP
 
 Phase C orchestration authz knobs (Open WebUI pipeline):
 

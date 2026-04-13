@@ -48,7 +48,8 @@ flowchart LR
 
 Notes about accuracy:
 
-- Keycloak is deployed in compose, and Open WebUI auth is enabled by default (OIDC wiring remains the next hardening increment).
+- Keycloak realm/client/role/group baseline is now provisioned during bootstrap for deterministic local OIDC/RBAC setup.
+- Open WebUI auth is enabled by default, with claim-based orchestration gates in the garrison pipeline.
 - OTel collector local config currently exports to debug.
 - tool-server now emits audit events as OTLP logs to the collector endpoint.
 - Open WebUI garrison_audit pipeline now emits inlet/outlet OTLP logs to the collector endpoint.
@@ -150,6 +151,7 @@ Primary commands from repository root:
 - Full local bootstrap and verification: bash scripts/bootstrap.sh
 - Single command CI-equivalent smoke run: bash scripts/ci-smoke.sh
 - Standalone audit evidence check: bash scripts/audit-pipeline-check.sh
+- Standalone Keycloak baseline + verification: bash scripts/keycloak-bootstrap.sh && bash scripts/keycloak-readiness.sh
 - Tool-server tests: cd tool-server && python -m pytest -q tests
 - Pipeline tests: cd open-webui/pipelines && python -m pytest -q test_garrison_audit.py
 

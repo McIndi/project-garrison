@@ -41,6 +41,12 @@ TOOL_SERVER_AUDIT_INGEST_TOKEN="${TOOL_SERVER_AUDIT_INGEST_TOKEN}" \
 echo "Configuring Vault baseline for dynamic/auditable secrets..."
 "$ROOT_DIR/scripts/vault-bootstrap.sh"
 
+echo "Configuring Keycloak realm/client/role/group baseline..."
+"$ROOT_DIR/scripts/keycloak-bootstrap.sh"
+
+echo "Running Keycloak readiness checks..."
+"$ROOT_DIR/scripts/keycloak-readiness.sh"
+
 echo "Issuing scoped Open WebUI orchestrate token from Vault..."
 OPENWEBUI_ORCH_TOKEN="$("$ROOT_DIR/scripts/issue-openwebui-token.sh")"
 if [[ -z "${OPENWEBUI_ORCH_TOKEN}" ]]; then

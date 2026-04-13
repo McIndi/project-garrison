@@ -146,6 +146,7 @@ Exit criteria:
 1. Integrate Open WebUI with Keycloak OIDC.
 - Configure realm/client for Open WebUI.
 - Enable login flow and map user claims.
+- Local bootstrap now provisions deterministic Keycloak realm/client/role/group baseline via scripts.
 
 2. Persist user identity through orchestration metadata.
 - Include immutable user subject (`sub`) and issuer in orchestration metadata.
