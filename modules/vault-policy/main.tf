@@ -41,7 +41,7 @@ locals {
 
   # Maps each policy name to its HCL template file.
   policy_template_map = {
-    "garrison-base"        = "${path.module}/templates/base-agent.hcl.tpl"
+    "garrison-base"         = "${path.module}/templates/base-agent.hcl.tpl"
     "garrison-orchestrator" = "${path.module}/templates/orchestrator.hcl.tpl"
     "garrison-rag"          = "${path.module}/templates/rag-agent.hcl.tpl"
     "garrison-code"         = "${path.module}/templates/code-agent.hcl.tpl"
@@ -54,7 +54,15 @@ locals {
 resource "vault_policy" "policies" {
   for_each = local.all_policy_names
 
-  name   = each.key
+  name = each.key
+
+  lifecycle {
+    precondition {
+      condition     = contains(keys(local.policy_template_map), each.key)
+      error_message = "No template exists for Vault policy '${each.key}'. Add it to local.policy_template_map (modules/vault-policy/main.tf) and create the corresponding templates/*.hcl.tpl file."
+    }
+  }
+
   policy = templatefile(local.policy_template_map[each.key], {})
 }
 

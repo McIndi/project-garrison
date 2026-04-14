@@ -1,10 +1,10 @@
 # Phase 7 scaffold stack. Module order mirrors SPEC.md.
 
 module "infra" {
-  source       = "../modules/infra"
-  environment  = var.environment
-  compose_file = var.compose_file
-  services     = var.core_services
+  source                = "../modules/infra"
+  environment           = var.environment
+  compose_file          = var.compose_file
+  services              = var.core_services
   vault_addr            = var.vault_addr
   container_name_prefix = var.container_name_prefix
 }
@@ -56,13 +56,13 @@ module "agent_role" {
 }
 
 module "agent_skill" {
-  source          = "../modules/agent-skill"
-  agent_classes   = var.agent_classes
-  skill_repo_path = var.skill_repo_path
+  source                     = "../modules/agent-skill"
+  agent_classes              = var.agent_classes
+  skill_repo_path            = var.skill_repo_path
   gitea_skills_repo          = var.gitea_skills_repo
   gitea_repo_branch          = var.gitea_repo_branch
   gitea_provisioning_enabled = var.gitea_provisioning_enabled
   gitea_base_url             = var.gitea_base_url
   gitea_token                = var.gitea_token
-  depends_on      = [module.agent_role]
+  depends_on                 = [module.agent_role]
 }
