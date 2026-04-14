@@ -32,8 +32,8 @@ flowchart TB
     VA --> FB
     NX --> FB
     FB --> TS
-    OW -. planned telemetry wiring .-> OT
-    TS -. planned telemetry wiring .-> OT
+    OW --> OT
+    TS --> OT
 ```
 
 ## Runtime Responsibilities
@@ -62,6 +62,13 @@ flowchart TB
 - OTel Collector:
   - Deployed in compose and configured with OTLP receiver plus debug exporter.
   - tool-server audit middleware emits OTLP logs to collector.
+  - Open WebUI garrison pipeline emits OTLP logs to collector.
+
+## Terraform Runtime Notes
+
+- Vault baseline can be provisioned through script-managed bootstrap or Terraform/OpenTofu mode.
+- CI uses containerized Terraform execution on the compose network for deterministic `vault` DNS reachability.
+- Vault audit defaults are file-based; syslog audit is opt-in for environments with an available syslog sink.
 
 ## Design Constraints Enforced in Code
 

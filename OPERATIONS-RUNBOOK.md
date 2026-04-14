@@ -24,12 +24,19 @@ Run bootstrap using Terraform-backed Vault provisioning:
 GARRISON_TERRAFORM=true bash scripts/bootstrap.sh
 ```
 
+Run bootstrap using containerized Terraform (same network namespace as compose services):
+
+```bash
+GARRISON_TERRAFORM=true GARRISON_TERRAFORM_CONTAINER=true bash scripts/bootstrap.sh
+```
+
 This executes:
 
 - Compose bring-up for core services.
 - Vault baseline bootstrap via `scripts/vault-bootstrap.sh`.
 	- Default mode: script-managed Vault API calls.
 	- Terraform mode (`GARRISON_TERRAFORM=true`): `tofu/terraform init + apply` from `terraform/`.
+	- Containerized Terraform mode (`GARRISON_TERRAFORM_CONTAINER=true`): runs Terraform in a container attached to the compose network (`vault` DNS path), using image `GARRISON_TERRAFORM_IMAGE`.
 - Vault readiness checks.
 - Vault policy matrix checks.
 - Vault dynamic secret lifecycle checks.
@@ -54,11 +61,19 @@ Run smoke using Terraform-backed Vault provisioning:
 GARRISON_TERRAFORM=true bash scripts/ci-smoke.sh
 ```
 
+Run smoke using containerized Terraform (CI-equivalent Terraform runtime):
+
+```bash
+GARRISON_TERRAFORM=true GARRISON_TERRAFORM_CONTAINER=true bash scripts/ci-smoke.sh
+```
+
 Optional environment variables:
 
 - `PYTHON_CMD` to select a specific Python interpreter.
 - `CI_INSTALL_DEPS=true` to force dependency installation.
 - `GARRISON_TERRAFORM=true` to run `tofu/terraform apply` before parity checks.
+- `GARRISON_TERRAFORM_CONTAINER=true` to run Terraform in a container on the compose network.
+- `GARRISON_TERRAFORM_IMAGE` to override the Terraform container image (default currently `hashicorp/terraform:1.12.1`; CI uses a custom image with curl installed).
 
 The smoke command validates:
 
@@ -73,6 +88,8 @@ When `GARRISON_TERRAFORM=true` is set, the smoke flow additionally:
 - Runs `tofu|terraform -chdir=terraform init -backend=false`.
 - Runs `tofu|terraform -chdir=terraform apply -auto-approve`.
 - Uses existing Vault scripts as post-apply parity validators.
+
+When `GARRISON_TERRAFORM_CONTAINER=true` is also set, init/apply run inside the configured Terraform container image and target Vault via compose-network DNS (`http://vault:8200`).
 
 ## Terraform/OpenTofu Validation and Apply
 

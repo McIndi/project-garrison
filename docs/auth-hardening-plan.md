@@ -73,7 +73,7 @@ Not yet explicit enough (added below in phases):
 
 - Enforce token metadata stamping (`agent_id`, `agent_class`) at issuance and validate in runtime checks.
 - Use Vault dynamic credentials for data-plane access by services (remove static Mongo/Valkey root credentials from runtime paths).
-- Register and verify both Vault audit devices expected by SPEC (`file` and `syslog`).
+- Register and verify both Vault audit devices expected by SPEC (`file` and `syslog`) in secure profile (runtime default remains file audit; syslog is opt-in).
 - Add Vault PKI-based service-to-service mTLS path for secure profile (tool-server <-> BeeAI runtime first).
 
 ### Keycloak intended responsibilities and plan coverage

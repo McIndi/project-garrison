@@ -45,6 +45,12 @@ Run CI-equivalent command:
 bash scripts/ci-smoke.sh
 ```
 
+Run CI-equivalent Terraform container mode:
+
+```bash
+GARRISON_TERRAFORM=true GARRISON_TERRAFORM_CONTAINER=true bash scripts/ci-smoke.sh
+```
+
 Issue only the Open WebUI orchestrate service token:
 
 ```bash
@@ -61,6 +67,9 @@ Optional environment knobs:
 
 - PYTHON_CMD for explicit interpreter.
 - CI_INSTALL_DEPS=true to force dependency install.
+- GARRISON_TERRAFORM=true to use Terraform/OpenTofu Vault bootstrap path.
+- GARRISON_TERRAFORM_CONTAINER=true to execute Terraform in a container on the compose network.
+- GARRISON_TERRAFORM_IMAGE to override the Terraform container image.
 - KEYCLOAK_BASE_URL (default: `127.0.0.1:8081`)
 - KEYCLOAK_ADMIN_USER / KEYCLOAK_ADMIN_PASSWORD
 - KEYCLOAK_REALM (default: garrison)

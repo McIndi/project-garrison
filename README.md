@@ -141,7 +141,10 @@ Current Phase 7 posture:
 
 - CI smoke workflow is active.
 - Terraform/OpenTofu init, validate, and apply paths are active.
+- Containerized Terraform apply path is active for CI parity and compose-network Vault reachability.
 - Vault core, PKI, dynamic secrets, transit, policy, and AppRole resources are managed by Terraform modules.
+- Vault audit default is file-only; syslog audit is opt-in for environments that provide a working syslog sink.
+- Transit convergent key provisioning enables key derivation for Vault API compatibility.
 - Skill documents are rendered by Terraform and can be published to Gitea when enabled.
 - Script-based Vault checks are retained as parity validators after Terraform apply.
 
@@ -151,8 +154,10 @@ Primary commands from repository root:
 
 - Full local bootstrap and verification (default script-managed Vault path): bash scripts/bootstrap.sh
 - Full local bootstrap and verification (Terraform Vault path): GARRISON_TERRAFORM=true bash scripts/bootstrap.sh
+- Full local bootstrap and verification (containerized Terraform Vault path): GARRISON_TERRAFORM=true GARRISON_TERRAFORM_CONTAINER=true bash scripts/bootstrap.sh
 - Single command CI-equivalent smoke run (default script path): bash scripts/ci-smoke.sh
 - Single command CI-equivalent smoke run (Terraform Vault path): GARRISON_TERRAFORM=true bash scripts/ci-smoke.sh
+- Single command CI-equivalent smoke run (containerized Terraform Vault path): GARRISON_TERRAFORM=true GARRISON_TERRAFORM_CONTAINER=true bash scripts/ci-smoke.sh
 - Standalone audit evidence check: bash scripts/audit-pipeline-check.sh
 - Standalone Keycloak baseline + verification: bash scripts/keycloak-bootstrap.sh && bash scripts/keycloak-readiness.sh
 - Tool-server tests: cd tool-server && python -m pytest -q tests

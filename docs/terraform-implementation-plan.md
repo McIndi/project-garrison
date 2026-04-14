@@ -52,6 +52,7 @@ tofu -chdir=terraform import module.vault_core.vault_auth_backend.approle approl
 
 # Audit devices
 tofu -chdir=terraform import module.vault_core.vault_audit.devices[\"file\"] file
+# Optional (only if syslog audit is explicitly enabled in your vars):
 tofu -chdir=terraform import module.vault_core.vault_audit.devices[\"syslog\"] syslog
 
 # Transit mount + keys
@@ -127,7 +128,7 @@ Vault address passed as `var.vault_addr` (same as the vault_core module).
 Maps 1:1 to the first three blocks of `vault-bootstrap.sh`.
 
 **Resources:**
-- `vault_audit.devices` — `for_each` over `var.audit_devices` (file + syslog)
+- `vault_audit.devices` — `for_each` over `var.audit_devices` (default file-only; syslog opt-in)
 - `vault_auth_backend.approle` — type = "approle", path = "approle"
 
 **Parity gate:** `scripts/vault-readiness.sh` must pass after apply.
@@ -186,6 +187,8 @@ Key properties from var.transit_keys:
 - `shared-memory`: aes256-gcm96, convergent=true (deterministic for dedup)
 - `artifact-signing`: ed25519, convergent=false
 
+Implementation note: convergent keys enable derivation (`derived = true`) to satisfy Vault transit API requirements.
+
 Note: `deletion_allowed = false` for all keys. Add `prevent_destroy` before enterprise deploy.
 
 **Parity gate:** transit encrypt/decrypt in `scripts/sanity-check.sh` must pass after apply.
@@ -223,7 +226,7 @@ Maps to the AppRole role creation at the bottom of `vault-bootstrap.sh`.
 
 Role properties:
 - `secret_id_num_uses = 1` — one-time use (SPEC requirement)
-- `secret_id_ttl = "30m"` — 30-minute window
+- `secret_id_ttl = 1800` — 30-minute window in seconds
 - `token_policies` — from `var.class_policy_map[each.key]`
 
 Role-ids are stable and included in the `role_definitions` output. Secret-ids are NEVER
@@ -245,8 +248,9 @@ Renders per-class skill documents from a template and commits them to Gitea.
 **Template file:** `modules/agent-skill/templates/skill.md.tpl`
 Variables: `agent_class`, `token_ttl`, `capabilities`, `description`
 
-**Resources (gated by `gitea_provisioning_enabled`):**
-- `gitea_repository_file.skills` — `for_each` over `var.agent_classes`
+**Resources:**
+- `local_file.skill_docs` — always renders local skill docs for all classes
+- `null_resource.gitea_commit` — commits rendered skill docs to Gitea when `gitea_provisioning_enabled=true`
 
 `rendered_skill_paths` output updated to reflect Gitea file paths.
 
@@ -274,6 +278,10 @@ When set:
 3. Run `tofu -chdir=terraform apply -auto-approve`
 4. Run vault-readiness.sh, vault-policy-check.sh, vault-dynamic-secrets-check.sh as parity gates
 5. Continue with tool-server, open-webui startup + sanity checks
+
+Containerized Terraform mode is supported via `GARRISON_TERRAFORM_CONTAINER=true`.
+In this mode init/apply run inside a Terraform container image on the compose network
+to use `http://vault:8200` directly.
 
 When NOT set: existing script-based flow unchanged (backward compatible).
 
@@ -305,5 +313,5 @@ Until parity is confirmed for ALL modules, `vault-bootstrap.sh` remains the defa
 | 6 | modules/vault-transit/main.tf | vault_mount, transit keys ×3 | sanity-check transit ops |
 | 7 | modules/vault-policy/main.tf + templates/ | vault_policy ×5 | vault-policy-check.sh |
 | 8 | modules/agent-role/main.tf | vault_approle_auth_backend_role ×4 | vault-policy-check.sh logins |
-| 9 | modules/agent-skill/main.tf + templates/ | gitea_repository_file ×4 | skill docs in Gitea |
+| 9 | modules/agent-skill/main.tf + templates/ | local_file + null_resource (optional Gitea publish) | skill docs rendered locally and optionally committed to Gitea |
 | 10 | variables.tf, main.tf, ci-smoke.sh | wiring + CI path | full smoke on GARRISON_TERRAFORM=true |
