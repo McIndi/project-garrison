@@ -71,8 +71,6 @@ trap cleanup EXIT
 
 cd "$ROOT_DIR"
 
-run_with_retry "bootstrap" bash -x scripts/bootstrap.sh
-
 if [[ "${CI_INSTALL_DEPS:-false}" == "true" ]]; then
   "$PYTHON_BIN" -m pip install --upgrade pip
   "$PYTHON_BIN" -m pip install -r tool-server/requirements.txt
@@ -82,6 +80,8 @@ else
     "$PYTHON_BIN" -m pip install -r tool-server/requirements.txt
   fi
 fi
+
+run_with_retry "bootstrap" bash -x scripts/bootstrap.sh
 
 (
   cd "$ROOT_DIR/tool-server"
