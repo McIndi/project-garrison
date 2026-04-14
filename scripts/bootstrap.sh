@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+GARRISON_TERRAFORM="${GARRISON_TERRAFORM:-false}"
 
 cd "$ROOT_DIR"
 
@@ -53,7 +54,11 @@ for attempt in $(seq 1 30); do
 	sleep 2
 done
 
-echo "Configuring Vault baseline for dynamic/auditable secrets..."
+if [[ "${GARRISON_TERRAFORM}" == "true" ]]; then
+	echo "Configuring Vault baseline for dynamic/auditable secrets via Terraform/OpenTofu..."
+else
+	echo "Configuring Vault baseline for dynamic/auditable secrets via script bootstrap..."
+fi
 "$ROOT_DIR/scripts/vault-bootstrap.sh"
 
 if [[ -z "${KEYCLOAK_OPENWEBUI_CLIENT_SECRET:-}" ]]; then

@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CI_BOOTSTRAP_RETRIES="${CI_BOOTSTRAP_RETRIES:-2}"
-# Set GARRISON_TERRAFORM=true to use OpenTofu for Vault configuration instead of
-# vault-bootstrap.sh. Runs tofu apply then uses the existing check scripts as parity gates.
+# Set GARRISON_TERRAFORM=true to run bootstrap in Terraform/OpenTofu mode.
+# This delegates Vault baseline provisioning to scripts/vault-bootstrap.sh Terraform path.
 GARRISON_TERRAFORM="${GARRISON_TERRAFORM:-false}"
 
 if command -v docker >/dev/null 2>&1; then
@@ -13,15 +13,6 @@ elif command -v podman >/dev/null 2>&1; then
   COMPOSE_CMD=(podman compose)
 else
   COMPOSE_CMD=()
-fi
-
-# Detect OpenTofu or Terraform binary for GARRISON_TERRAFORM path.
-if command -v tofu >/dev/null 2>&1; then
-  TOFU_CMD=tofu
-elif command -v terraform >/dev/null 2>&1; then
-  TOFU_CMD=terraform
-else
-  TOFU_CMD=""
 fi
 
 if [[ -n "${PYTHON_CMD:-}" ]]; then
@@ -83,77 +74,11 @@ trap cleanup EXIT
 
 cd "$ROOT_DIR"
 
-# ---------------------------------------------------------------------------
-# Terraform parity path: bring up compose core, run tofu apply, then validate.
-# ---------------------------------------------------------------------------
 if [[ "${GARRISON_TERRAFORM}" == "true" ]]; then
-  if [[ -z "${TOFU_CMD}" ]]; then
-    echo "[ERROR] GARRISON_TERRAFORM=true but neither 'tofu' nor 'terraform' is installed." >&2
-    exit 1
-  fi
-
-  echo "=== GARRISON_TERRAFORM mode: OpenTofu-backed Vault provisioning ==="
-
-  if [[ "${#COMPOSE_CMD[@]}" -gt 0 ]]; then
-    echo "Starting core compose services (containers only — Vault config handled by Terraform)..."
-    TOOL_SERVER_AUDIT_INGEST_TOKEN="${TOOL_SERVER_AUDIT_INGEST_TOKEN:-placeholder}" \
-      "${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d --build \
-        valkey mongo vault beeai-runtime nginx fluent-bit otel-collector keycloak
-
-    echo "Preparing Vault audit log path permissions..."
-    "${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" exec -T -u root vault sh -c \
-      'mkdir -p /vault/logs && touch /vault/logs/audit.log && chown vault:vault /vault/logs /vault/logs/audit.log && chmod 0700 /vault/logs && chmod 0600 /vault/logs/audit.log' || true
-
-    echo "Waiting for Vault API readiness..."
-    for attempt in $(seq 1 30); do
-      if curl -fsS --max-time 2 "http://127.0.0.1:8200/v1/sys/health" >/dev/null 2>&1; then
-        break
-      fi
-      if [[ "$attempt" -eq 30 ]]; then
-        echo "[ERROR] Vault did not become ready in time." >&2
-        exit 1
-      fi
-      sleep 2
-    done
-  fi
-
-  echo "Running: ${TOFU_CMD} -chdir=terraform init -backend=false"
-  "${TOFU_CMD}" -chdir=terraform init -backend=false
-
-  export VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
-  export VAULT_TOKEN="${VAULT_TOKEN:-root}"
-
-  echo "Running: ${TOFU_CMD} -chdir=terraform apply -auto-approve"
-  "${TOFU_CMD}" -chdir=terraform apply -auto-approve \
-    -var="mongo_root_password=${MONGO_ROOT_PASSWORD:-rootpass}" \
-    -var="valkey_password=${VALKEY_PASSWORD:-rootpass}"
-
-  echo "--- Terraform applied. Running parity validation scripts ---"
-  bash "$ROOT_DIR/scripts/vault-readiness.sh"
-  bash "$ROOT_DIR/scripts/vault-policy-check.sh"
-  bash "$ROOT_DIR/scripts/vault-dynamic-secrets-check.sh"
-
-  if [[ "${CI_INSTALL_DEPS:-false}" == "true" ]]; then
-    "$PYTHON_BIN" -m pip install --upgrade pip
-    "$PYTHON_BIN" -m pip install -r tool-server/requirements.txt
-  fi
-
-  (
-    cd "$ROOT_DIR/tool-server"
-    "$PYTHON_BIN" -m pytest -q tests
-  )
-
-  (
-    cd "$ROOT_DIR/open-webui/pipelines"
-    "$PYTHON_BIN" -m pytest -q test_garrison_audit.py
-  )
-
-  echo "=== Terraform parity smoke passed ==="
-  exit 0
+  echo "=== CI smoke using Terraform/OpenTofu bootstrap path ==="
+else
+  echo "=== CI smoke using script-managed bootstrap path ==="
 fi
-# ---------------------------------------------------------------------------
-# Default path: existing script-based bootstrap (vault-bootstrap.sh).
-# ---------------------------------------------------------------------------
 
 if [[ "${CI_INSTALL_DEPS:-false}" == "true" ]]; then
   "$PYTHON_BIN" -m pip install --upgrade pip
@@ -165,7 +90,7 @@ else
   fi
 fi
 
-run_with_retry "bootstrap" bash -x scripts/bootstrap.sh
+run_with_retry "bootstrap" env GARRISON_TERRAFORM="${GARRISON_TERRAFORM}" bash -x scripts/bootstrap.sh
 
 (
   cd "$ROOT_DIR/tool-server"

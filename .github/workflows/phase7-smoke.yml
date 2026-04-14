@@ -44,4 +44,5 @@ jobs:
         env:
           PYTHON_CMD: python
           CI_INSTALL_DEPS: "true"
+          GARRISON_TERRAFORM: "true"
         run: bash scripts/ci-smoke.sh

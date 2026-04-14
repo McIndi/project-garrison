@@ -101,6 +101,11 @@ Exit Criteria:
 ### Phase 7 - Terraform/Packaging Alignment
 Goal: make runtime reproducible and handoff-ready.
 
+Status update (2026-04-14):
+- Provider-backed Terraform module pass has been implemented in branch `feat/ok-lets-add-terraform-proper`.
+- `scripts/bootstrap.sh` and `scripts/ci-smoke.sh` now support Terraform-backed provisioning via `GARRISON_TERRAFORM=true`.
+- Default bootstrap behavior remains script-managed when the Terraform toggle is not set.
+
 Scope:
 1. Add terraform module structure to mirror spec execution order.
 2. Add reproducible bootstrap command sequence and CI smoke workflow.

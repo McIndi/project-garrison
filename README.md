@@ -131,7 +131,7 @@ Open WebUI pipeline settings:
 
 ## Infrastructure as Code Status
 
-Terraform/OpenTofu currently provides a validated module contract layer in spec order under modules and terraform.
+Terraform/OpenTofu now provisions provider-backed resources in spec module order under modules and terraform.
 
 - Root composition: terraform/main.tf
 - Shared variables: terraform/variables.tf
@@ -140,16 +140,19 @@ Terraform/OpenTofu currently provides a validated module contract layer in spec 
 Current Phase 7 posture:
 
 - CI smoke workflow is active.
-- Terraform/OpenTofu init and validate are active.
-- Module contracts are wired.
-- Provider-backed resource implementation is the next increment.
+- Terraform/OpenTofu init, validate, and apply paths are active.
+- Vault core, PKI, dynamic secrets, transit, policy, and AppRole resources are managed by Terraform modules.
+- Skill documents are rendered by Terraform and can be published to Gitea when enabled.
+- Script-based Vault checks are retained as parity validators after Terraform apply.
 
 ## Operations
 
 Primary commands from repository root:
 
-- Full local bootstrap and verification: bash scripts/bootstrap.sh
-- Single command CI-equivalent smoke run: bash scripts/ci-smoke.sh
+- Full local bootstrap and verification (default script-managed Vault path): bash scripts/bootstrap.sh
+- Full local bootstrap and verification (Terraform Vault path): GARRISON_TERRAFORM=true bash scripts/bootstrap.sh
+- Single command CI-equivalent smoke run (default script path): bash scripts/ci-smoke.sh
+- Single command CI-equivalent smoke run (Terraform Vault path): GARRISON_TERRAFORM=true bash scripts/ci-smoke.sh
 - Standalone audit evidence check: bash scripts/audit-pipeline-check.sh
 - Standalone Keycloak baseline + verification: bash scripts/keycloak-bootstrap.sh && bash scripts/keycloak-readiness.sh
 - Tool-server tests: cd tool-server && python -m pytest -q tests

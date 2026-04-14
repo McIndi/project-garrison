@@ -1,8 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+GARRISON_TERRAFORM="${GARRISON_TERRAFORM:-false}"
+
 VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
 VAULT_TOKEN="${VAULT_TOKEN:-root}"
+
+if [[ "${GARRISON_TERRAFORM}" == "true" ]]; then
+  if command -v tofu >/dev/null 2>&1; then
+    TF_BIN="tofu"
+  elif command -v terraform >/dev/null 2>&1; then
+    TF_BIN="terraform"
+  else
+    echo "[ERROR] GARRISON_TERRAFORM=true but neither 'tofu' nor 'terraform' is available." >&2
+    exit 1
+  fi
+
+  echo "[Vault bootstrap] Terraform mode enabled. Running ${TF_BIN} apply for Vault baseline..."
+  export VAULT_ADDR
+  export VAULT_TOKEN
+
+  "${TF_BIN}" -chdir="${ROOT_DIR}/terraform" init -backend=false
+  "${TF_BIN}" -chdir="${ROOT_DIR}/terraform" apply -auto-approve \
+    -var="mongo_root_password=${MONGO_ROOT_PASSWORD:-rootpass}" \
+    -var="valkey_password=${VALKEY_PASSWORD:-rootpass}"
+
+  echo "[Vault bootstrap] Terraform apply completed."
+  exit 0
+fi
 
 api_get() {
   local path="$1"

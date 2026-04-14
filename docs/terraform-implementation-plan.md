@@ -1,7 +1,7 @@
 # Terraform Implementation Plan — Project Garrison
 
 **Branch:** `feat/ok-lets-add-terraform-proper`
-**Status:** In progress — Phase 7 of EXECUTION-PLAN.md
+**Status:** Implemented in current branch — Phase 7 Terraform provider-backed pass
 
 This document is the canonical reference for implementing provider-backed Terraform resources
 in module order, per the grounded next-step noted in EXECUTION-PLAN.md Phase 7.
@@ -10,9 +10,11 @@ in module order, per the grounded next-step noted in EXECUTION-PLAN.md Phase 7.
 
 ## Context
 
-The Terraform scaffold (modules + root wiring) already validates and is structurally correct.
-All 8 modules exist with correct variable declarations, locals, and output contracts.
-**No `resource` blocks exist yet.** Vault is currently bootstrapped exclusively via shell scripts.
+Terraform modules are now provider-backed and validate cleanly.
+All 8 modules are wired and include concrete resources for Vault provisioning.
+Vault can be bootstrapped via Terraform in both:
+- `GARRISON_TERRAFORM=true bash scripts/bootstrap.sh`
+- `GARRISON_TERRAFORM=true bash scripts/ci-smoke.sh`
 
 This plan replaces `vault-bootstrap.sh` configuration with Terraform-managed resources.
 The existing scripts (`vault-readiness.sh`, `vault-policy-check.sh`, etc.) become

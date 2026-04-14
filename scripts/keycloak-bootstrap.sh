@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+GARRISON_TERRAFORM="${GARRISON_TERRAFORM:-false}"
+
 KEYCLOAK_BASE_URL="${KEYCLOAK_BASE_URL:-http://127.0.0.1:8081}"
 KEYCLOAK_ADMIN_USER="${KEYCLOAK_ADMIN_USER:-admin}"
 KEYCLOAK_ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-admin}"
@@ -9,6 +11,10 @@ KEYCLOAK_OPENWEBUI_CLIENT_ID="${KEYCLOAK_OPENWEBUI_CLIENT_ID:-open-webui}"
 KEYCLOAK_OPENWEBUI_CLIENT_SECRET="${KEYCLOAK_OPENWEBUI_CLIENT_SECRET:-}"
 KEYCLOAK_ORCHESTRATOR_ROLE="${KEYCLOAK_ORCHESTRATOR_ROLE:-garrison-orchestrator}"
 KEYCLOAK_ORCHESTRATOR_GROUP="${KEYCLOAK_ORCHESTRATOR_GROUP:-garrison-orchestrators}"
+
+if [[ "${GARRISON_TERRAFORM}" == "true" ]]; then
+  echo "[Keycloak] Running in Terraform workflow mode (Vault baseline is managed by Terraform/OpenTofu)."
+fi
 
 if [[ -z "${KEYCLOAK_OPENWEBUI_CLIENT_SECRET}" ]]; then
   KEYCLOAK_OPENWEBUI_CLIENT_SECRET="$(head -c 32 /dev/urandom | base64 | tr -d '=+/\n' | cut -c1-32)"
