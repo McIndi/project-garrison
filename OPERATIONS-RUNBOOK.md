@@ -73,7 +73,7 @@ Optional environment variables:
 - `CI_INSTALL_DEPS=true` to force dependency installation.
 - `GARRISON_TERRAFORM=true` to run `tofu/terraform apply` before parity checks.
 - `GARRISON_TERRAFORM_CONTAINER=true` to run Terraform in a container on the compose network.
-- `GARRISON_TERRAFORM_IMAGE` to override the Terraform container image (default currently `hashicorp/terraform:1.12.1`; CI uses a custom image with curl installed).
+- `GARRISON_TERRAFORM_IMAGE` to override the Terraform container image (default: `hashicorp/terraform:1.12.1`; CI uses a custom image with curl installed).
 
 The smoke command validates:
 

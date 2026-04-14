@@ -2,11 +2,11 @@
 
 Project Garrison is a policy-governed runtime for spawning, coordinating, and auditing agents with explicit identity and secret lifecycle controls.
 
-## What Is Running Today
+## What Is Running
 
 - Open WebUI receives user prompts and can trigger orchestration.
 - tool-server is the runtime policy and orchestration chokepoint.
-- beeai-runtime currently runs as a stub spawn/terminate runtime.
+- beeai-runtime runs as a stub spawn/terminate runtime.
 - Vault is used for token lookup, AppRole issuance, and transit crypto.
 - Valkey backs memory and registry state.
 - MongoDB receives runtime audit and artifact-related writes.
@@ -41,8 +41,8 @@ The smoke path validates:
 - Runtime endpoint sanity including spawn, delete, and orchestrate bridge.
 - Python test suites for tool-server and pipeline behavior.
 
-## Current Scope Boundaries
+## Scope Boundaries
 
 - Open WebUI auth is enabled; full Keycloak OIDC role mapping and policy enforcement are the next increment.
-- OTel currently exports to debug in collector config.
+- OTel exports to debug in collector config.
 - OTLP logs are emitted by both tool-server and Open WebUI pipeline in local mode.

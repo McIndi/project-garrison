@@ -10,7 +10,7 @@ in module order, per the grounded next-step noted in EXECUTION-PLAN.md Phase 7.
 
 ## Context
 
-Terraform modules are now provider-backed and validate cleanly.
+Terraform modules are provider-backed and validate cleanly.
 All 8 modules are wired and include concrete resources for Vault provisioning.
 Vault can be bootstrapped via Terraform in both:
 - `GARRISON_TERRAFORM=true bash scripts/bootstrap.sh`
@@ -43,8 +43,7 @@ Before `terraform apply` can succeed:
 
 ## Import Commands (first-time transition from script-managed Vault)
 
-If Vault was previously configured by `vault-bootstrap.sh`, import existing resources before
-applying to avoid conflicts. On a fresh (dev) Vault instance, skip this step.
+If Vault is configured by `vault-bootstrap.sh`, import existing resources before applying to avoid conflicts. On a fresh (dev) Vault instance, skip this step.
 
 ```bash
 # Auth backend

@@ -170,7 +170,7 @@ Exit criteria:
 
 - Configure realm/client for Open WebUI.
 - Enable login flow and map user claims.
-- Local bootstrap now provisions deterministic Keycloak realm/client/role/group baseline via scripts.
+- Local bootstrap provisions deterministic Keycloak realm/client/role/group baseline via scripts.
 
 1. Persist user identity through orchestration metadata.
 

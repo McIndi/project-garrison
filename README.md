@@ -2,7 +2,7 @@
 
 Project Garrison is an auditable, policy-driven agent runtime. It separates human identity from agent identity, routes all agent operations through a policy chokepoint, and validates secret lifecycle controls end to end.
 
-## Current Implementation Snapshot
+## Implementation Snapshot
 
 - Human interaction is through Open WebUI.
 - Runtime control is through tool-server.
@@ -10,7 +10,7 @@ Project Garrison is an auditable, policy-driven agent runtime. It separates huma
 - Vault is used for token lookup, AppRole issuance, and transit encryption/decryption.
 - Valkey backs shared memory and registry data.
 - MongoDB stores audit events and per-agent collections.
-- OpenTelemetry Collector is present and currently exports to debug output in local mode.
+- OpenTelemetry Collector is present and exports to debug output in local mode.
 
 ## Architecture
 
@@ -40,26 +40,26 @@ flowchart LR
     TS -->|token lookup + AppRole + transit| VA
     TS -->|memory / registry| VK
     TS -->|audit + artifacts + handoffs| MG
-    OW -. planned telemetry wiring .-> OT
-    TS -. planned telemetry wiring .-> OT
+    OW --> OT
+    TS --> OT
 
     OW -. deployed alongside .-> KC
 ```
 
-Notes about accuracy:
+Runtime characteristics:
 
-- Keycloak realm/client/role/group baseline is now provisioned during bootstrap for deterministic local OIDC/RBAC setup.
+- Keycloak realm/client/role/group baseline is provisioned during bootstrap for deterministic local OIDC/RBAC setup.
 - Open WebUI auth is enabled by default, with claim-based orchestration gates in the garrison pipeline.
-- OTel collector local config currently exports to debug.
-- tool-server now emits audit events as OTLP logs to the collector endpoint.
-- Open WebUI garrison_audit pipeline now emits inlet/outlet OTLP logs to the collector endpoint.
-- Open WebUI orchestrate bearer token is issued at bootstrap from Vault with scoped policies and agent metadata (no static compose root token).
-- Fluent Bit -> tool-server audit ingest token is generated at bootstrap and injected at runtime (no static compose token literal).
+- OTel collector local config exports to debug.
+- tool-server emits audit events as OTLP logs to the collector endpoint.
+- Open WebUI garrison_audit pipeline emits inlet/outlet OTLP logs to the collector endpoint.
+- Open WebUI orchestrate bearer token is issued at bootstrap from Vault with scoped policies and agent metadata.
+- Fluent Bit -> tool-server audit ingest token is generated at bootstrap and injected at runtime.
 - Open WebUI pipeline enforces claim-based orchestration authorization (required role/group and `sub`/`iss` identity claims) before calling tool-server.
 - Open WebUI pipeline validates OIDC token claims for orchestration authorization (`iss`, `aud`, `exp` with skew tolerance).
 - Open WebUI role/group authorization mapping mode is configurable (`any` or `all`).
-- Nginx is active in local compose as the outbound fetch proxy for tool-server.
-- Fluent Bit is active in local compose, tails Vault and Nginx logs, and forwards records to tool-server internal audit ingest endpoints that persist to MongoDB.
+- Nginx runs in local compose as the outbound fetch proxy for tool-server.
+- Fluent Bit tails Vault and Nginx logs and forwards records to tool-server internal audit ingest endpoints that persist to MongoDB.
 
 ## Request and Delegation Flow
 
@@ -112,7 +112,7 @@ Internal endpoints used by local audit pipeline:
 - Vault token lookup is enabled in compose via TOOL_SERVER_REQUIRE_TOKEN_LOOKUP=true.
 - Vault token metadata contract is enforced (`agent_id` and `agent_class` claims required under strict binding).
 - Spawn/terminate is orchestrator-only.
-- Spawn depth is capped by TOOL_SERVER_SPAWN_MAX_DEPTH (currently 2).
+- Spawn depth is capped by TOOL_SERVER_SPAWN_MAX_DEPTH (2).
 - Nested spawn/delete is constrained by root_orchestrator_id ownership checks.
 - Human session propagation is enforced through x-human-session-id and orchestration payloads.
 - OTEL forwarding from tool-server is best-effort and does not block request handling.
@@ -131,7 +131,7 @@ Open WebUI pipeline settings:
 
 ## Infrastructure as Code Status
 
-Terraform/OpenTofu now provisions provider-backed resources in spec module order under modules and terraform.
+Terraform/OpenTofu provisions provider-backed resources in spec module order under modules and terraform.
 
 - Root composition: terraform/main.tf
 - Shared variables: terraform/variables.tf
