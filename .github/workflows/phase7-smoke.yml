@@ -40,10 +40,18 @@ jobs:
           docker --version
           docker compose version
 
+      - name: Build Terraform runner image (includes curl)
+        run: |
+          docker build \
+            -t garrison-terraform-runner:1.12.1 \
+            -f docker/terraform-runner.Dockerfile \
+            .
+
       - name: Run Phase 7 smoke flow
         env:
           PYTHON_CMD: python
           CI_INSTALL_DEPS: "true"
           GARRISON_TERRAFORM: "true"
           GARRISON_TERRAFORM_CONTAINER: "true"
+          GARRISON_TERRAFORM_IMAGE: "garrison-terraform-runner:1.12.1"
         run: bash scripts/ci-smoke.sh
