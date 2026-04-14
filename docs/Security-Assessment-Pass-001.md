@@ -72,7 +72,7 @@ sequenceDiagram
     H->>OW: POST /api/chat (session cookie)
     OW->>P: inlet(body, user_dict)
     Note over P: ① OIDC claim check<br/>iss / aud / exp / roles / groups<br/>(trusts caller-supplied dict — no sig verify)
-    P->>TS: POST /orchestrate<br/>Authorization: Bearer &lt;orchestrate_token&gt;<br/>x-agent-id / x-agent-class headers
+    P->>TS: POST /orchestrate<br/>Authorization: Bearer ORCHESTRATE_TOKEN<br/>x-agent-id / x-agent-class headers
     TS->>V: GET /v1/auth/token/lookup-self
     Note over TS: ② Token identity binding<br/>token metadata.agent_id == x-agent-id<br/>token metadata.agent_class == x-agent-class
     V-->>TS: policies + metadata
