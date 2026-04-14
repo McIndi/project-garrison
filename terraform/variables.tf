@@ -32,7 +32,7 @@ variable "vault_addr" {
 }
 
 variable "vault_audit_devices" {
-  description = "Audit devices to configure in Vault core layer."
+  description = "Audit devices to configure in Vault core layer (file by default; syslog is opt-in for environments with a working syslog sink)."
   type = map(object({
     type = string
     path = string
@@ -41,10 +41,6 @@ variable "vault_audit_devices" {
     file = {
       type = "file"
       path = "/vault/logs/audit.log"
-    }
-    syslog = {
-      type = "syslog"
-      path = "AUTH"
     }
   }
 }
