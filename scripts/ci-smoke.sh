@@ -6,6 +6,7 @@ CI_BOOTSTRAP_RETRIES="${CI_BOOTSTRAP_RETRIES:-2}"
 # Set GARRISON_TERRAFORM=true to run bootstrap in Terraform/OpenTofu mode.
 # This delegates Vault baseline provisioning to scripts/vault-bootstrap.sh Terraform path.
 GARRISON_TERRAFORM="${GARRISON_TERRAFORM:-false}"
+GARRISON_TERRAFORM_CONTAINER="${GARRISON_TERRAFORM_CONTAINER:-${CI:-false}}"
 
 if command -v docker >/dev/null 2>&1; then
   COMPOSE_CMD=(docker compose)
@@ -90,7 +91,10 @@ else
   fi
 fi
 
-run_with_retry "bootstrap" env GARRISON_TERRAFORM="${GARRISON_TERRAFORM}" bash -x scripts/bootstrap.sh
+run_with_retry "bootstrap" env \
+  GARRISON_TERRAFORM="${GARRISON_TERRAFORM}" \
+  GARRISON_TERRAFORM_CONTAINER="${GARRISON_TERRAFORM_CONTAINER}" \
+  bash -x scripts/bootstrap.sh
 
 (
   cd "$ROOT_DIR/tool-server"

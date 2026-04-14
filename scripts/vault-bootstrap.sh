@@ -3,28 +3,122 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 GARRISON_TERRAFORM="${GARRISON_TERRAFORM:-false}"
+GARRISON_TERRAFORM_CONTAINER="${GARRISON_TERRAFORM_CONTAINER:-${CI:-false}}"
+GARRISON_TERRAFORM_IMAGE="${GARRISON_TERRAFORM_IMAGE:-hashicorp/terraform:1.12.1}"
 
 VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
 VAULT_TOKEN="${VAULT_TOKEN:-root}"
 
-if [[ "${GARRISON_TERRAFORM}" == "true" ]]; then
-  if command -v tofu >/dev/null 2>&1; then
-    TF_BIN="tofu"
-  elif command -v terraform >/dev/null 2>&1; then
-    TF_BIN="terraform"
-  else
-    echo "[ERROR] GARRISON_TERRAFORM=true but neither 'tofu' nor 'terraform' is available." >&2
-    exit 1
+resolve_compose_runtime() {
+  if command -v docker >/dev/null 2>&1; then
+    RUNTIME_ENGINE="docker"
+    COMPOSE_CMD=(docker compose)
+    return 0
   fi
 
-  echo "[Vault bootstrap] Terraform mode enabled. Running ${TF_BIN} apply for Vault baseline..."
-  export VAULT_ADDR
-  export VAULT_TOKEN
+  if command -v podman >/dev/null 2>&1; then
+    RUNTIME_ENGINE="podman"
+    COMPOSE_CMD=(podman compose)
+    return 0
+  fi
 
-  "${TF_BIN}" -chdir="${ROOT_DIR}/terraform" init -backend=false
-  "${TF_BIN}" -chdir="${ROOT_DIR}/terraform" apply -auto-approve \
-    -var="mongo_root_password=${MONGO_ROOT_PASSWORD:-rootpass}" \
-    -var="valkey_password=${VALKEY_PASSWORD:-rootpass}"
+  return 1
+}
+
+resolve_vault_network() {
+  local vault_container_id networks
+
+  vault_container_id="$("${COMPOSE_CMD[@]}" -f "${ROOT_DIR}/compose.yaml" ps -q vault 2>/dev/null || true)"
+  if [[ -z "${vault_container_id}" ]]; then
+    echo "[ERROR] Unable to resolve vault container id from compose." >&2
+    return 1
+  fi
+
+  networks="$("${RUNTIME_ENGINE}" inspect -f '{{range $k, $_ := .NetworkSettings.Networks}}{{println $k}}{{end}}' "${vault_container_id}" 2>/dev/null | sed '/^$/d' || true)"
+  if [[ -z "${networks}" ]]; then
+    echo "[ERROR] Unable to resolve compose network for vault container ${vault_container_id}." >&2
+    return 1
+  fi
+
+  if grep -q 'data-net$' <<<"${networks}"; then
+    VAULT_NETWORK="$(grep 'data-net$' <<<"${networks}" | head -n1)"
+  elif grep -q 'agent-net$' <<<"${networks}"; then
+    VAULT_NETWORK="$(grep 'agent-net$' <<<"${networks}" | head -n1)"
+  else
+    VAULT_NETWORK="$(head -n1 <<<"${networks}")"
+  fi
+
+  if [[ -z "${VAULT_NETWORK}" ]]; then
+    echo "[ERROR] Computed Vault network is empty." >&2
+    return 1
+  fi
+
+  return 0
+}
+
+run_terraform_in_container() {
+  local mongo_root_password valkey_password
+  mongo_root_password="${MONGO_ROOT_PASSWORD:-rootpass}"
+  valkey_password="${VALKEY_PASSWORD:-rootpass}"
+
+  echo "[Vault bootstrap] Containerized Terraform enabled (image=${GARRISON_TERRAFORM_IMAGE}, network=${VAULT_NETWORK})."
+
+  "${RUNTIME_ENGINE}" run --rm \
+    --network "${VAULT_NETWORK}" \
+    -e TF_IN_AUTOMATION=1 \
+    -e VAULT_ADDR="http://vault:8200" \
+    -e VAULT_TOKEN="${VAULT_TOKEN}" \
+    -e TF_VAR_mongo_root_password="${mongo_root_password}" \
+    -e TF_VAR_valkey_password="${valkey_password}" \
+    -v "${ROOT_DIR}:/workspace" \
+    -w /workspace \
+    "${GARRISON_TERRAFORM_IMAGE}" \
+    -chdir=terraform init -backend=false
+
+  "${RUNTIME_ENGINE}" run --rm \
+    --network "${VAULT_NETWORK}" \
+    -e TF_IN_AUTOMATION=1 \
+    -e VAULT_ADDR="http://vault:8200" \
+    -e VAULT_TOKEN="${VAULT_TOKEN}" \
+    -e TF_VAR_mongo_root_password="${mongo_root_password}" \
+    -e TF_VAR_valkey_password="${valkey_password}" \
+    -v "${ROOT_DIR}:/workspace" \
+    -w /workspace \
+    "${GARRISON_TERRAFORM_IMAGE}" \
+    -chdir=terraform apply -auto-approve
+}
+
+if [[ "${GARRISON_TERRAFORM}" == "true" ]]; then
+  if [[ "${GARRISON_TERRAFORM_CONTAINER}" == "true" ]]; then
+    if ! resolve_compose_runtime; then
+      echo "[ERROR] GARRISON_TERRAFORM_CONTAINER=true but neither docker nor podman compose is available." >&2
+      exit 1
+    fi
+
+    if ! resolve_vault_network; then
+      exit 1
+    fi
+
+    run_terraform_in_container
+  else
+    if command -v tofu >/dev/null 2>&1; then
+      TF_BIN="tofu"
+    elif command -v terraform >/dev/null 2>&1; then
+      TF_BIN="terraform"
+    else
+      echo "[ERROR] GARRISON_TERRAFORM=true but neither 'tofu' nor 'terraform' is available." >&2
+      exit 1
+    fi
+
+    echo "[Vault bootstrap] Terraform mode enabled. Running ${TF_BIN} apply for Vault baseline..."
+    export VAULT_ADDR
+    export VAULT_TOKEN
+
+    "${TF_BIN}" -chdir="${ROOT_DIR}/terraform" init -backend=false
+    "${TF_BIN}" -chdir="${ROOT_DIR}/terraform" apply -auto-approve \
+      -var="mongo_root_password=${MONGO_ROOT_PASSWORD:-rootpass}" \
+      -var="valkey_password=${VALKEY_PASSWORD:-rootpass}"
+  fi
 
   echo "[Vault bootstrap] Terraform apply completed."
   exit 0
