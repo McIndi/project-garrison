@@ -508,13 +508,13 @@ async def get_registry(_: AuthContext = Depends(require_auth_context)) -> dict:
 
 @app.post("/tools/fetch", response_model=FetchResponse)
 async def fetch_url(body: FetchRequest, _: AuthContext = Depends(require_auth_context)) -> FetchResponse:
+    if settings.fetch_require_proxy and not settings.fetch_proxy_url:
+        raise HTTPException(status_code=503, detail="Fetch proxy is required but not configured")
+
     _validate_fetch_url(body.url)
     method = body.method.upper()
     if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"}:
         raise HTTPException(status_code=400, detail="Unsupported HTTP method")
-
-    if settings.fetch_require_proxy and not settings.fetch_proxy_url:
-        raise HTTPException(status_code=503, detail="Fetch proxy is required but not configured")
 
     req_headers = dict(body.headers)
 
