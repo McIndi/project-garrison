@@ -32,6 +32,7 @@ resource "vault_transit_secret_backend_key" "keys" {
   name                   = each.key
   type                   = each.value.type
   convergent_encryption  = each.value.convergent
+  derived                = each.value.convergent
   deletion_allowed       = false
   exportable             = false
   allow_plaintext_backup = false
