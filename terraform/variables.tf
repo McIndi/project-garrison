@@ -138,29 +138,29 @@ variable "dynamic_secret_roles" {
   description = "Dynamic roles expected for MongoDB and Valkey."
   type = map(object({
     backend     = string
-    default_ttl = string
-    max_ttl     = string
+    default_ttl = number
+    max_ttl     = number
   }))
   default = {
     mongo-readonly = {
       backend     = "database"
-      default_ttl = "1h"
-      max_ttl     = "24h"
+      default_ttl = 3600
+      max_ttl     = 86400
     }
     mongo-rag-writer = {
       backend     = "database"
-      default_ttl = "1h"
-      max_ttl     = "24h"
+      default_ttl = 3600
+      max_ttl     = 86400
     }
     mongo-code-writer = {
       backend     = "database"
-      default_ttl = "1h"
-      max_ttl     = "24h"
+      default_ttl = 3600
+      max_ttl     = 86400
     }
     valkey-readonly = {
       backend     = "database"
-      default_ttl = "1h"
-      max_ttl     = "24h"
+      default_ttl = 3600
+      max_ttl     = 86400
     }
   }
 }

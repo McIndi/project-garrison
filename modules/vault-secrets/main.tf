@@ -15,8 +15,8 @@ variable "enabled_secret_engines" {
 variable "dynamic_secret_roles" {
   type = map(object({
     backend     = string
-    default_ttl = string
-    max_ttl     = string
+    default_ttl = number
+    max_ttl     = number
   }))
 }
 
