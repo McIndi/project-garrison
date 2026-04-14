@@ -57,7 +57,12 @@ for attempt in $(seq 1 30); do
 	sleep 2
 done
 
-mkdir -p "$(dirname "${GARRISON_VAULT_INIT_FILE}")"
+if ! mkdir -p "$(dirname "${GARRISON_VAULT_INIT_FILE}")" 2>/dev/null; then
+	fallback_init_file="${TMPDIR:-/tmp}/garrison-vault-init.json"
+	echo "[WARN] Cannot write to ${GARRISON_VAULT_INIT_FILE}; using ${fallback_init_file} instead."
+	GARRISON_VAULT_INIT_FILE="${fallback_init_file}"
+	mkdir -p "$(dirname "${GARRISON_VAULT_INIT_FILE}")"
+fi
 
 vault_init_status="$(curl -fsS --max-time 3 "${VAULT_ADDR}/v1/sys/init" || true)"
 if [[ "${vault_init_status}" == *'"initialized":false'* ]]; then
