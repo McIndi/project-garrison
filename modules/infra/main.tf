@@ -42,9 +42,9 @@ resource "null_resource" "vault_health" {
   }
 
   provisioner "local-exec" {
-    interpreter = ["/bin/bash", "-c"]
+    interpreter = ["/bin/sh", "-c"]
     command     = <<-EOT
-      set -euo pipefail
+      set -eu
 
       health_url="${var.vault_addr}/v1/sys/health"
       max_attempts=10
@@ -64,7 +64,7 @@ resource "null_resource" "vault_health" {
         getent hosts "$vault_host" || echo "  (no host resolution yet)"
       fi
 
-      while [[ "$attempt" -le "$max_attempts" ]]; do
+      while [ "$attempt" -le "$max_attempts" ]; do
         body_file="$(mktemp)"
         err_file="$(mktemp)"
 
@@ -91,15 +91,15 @@ resource "null_resource" "vault_health" {
             ;;
         esac
 
-        if [[ "$attempt" -eq "$max_attempts" ]]; then
+        if [ "$attempt" -eq "$max_attempts" ]; then
           break
         fi
 
         echo "Retrying in $${sleep_seconds}s..."
         sleep "$sleep_seconds"
-        if [[ "$sleep_seconds" -lt "$max_sleep_seconds" ]]; then
+        if [ "$sleep_seconds" -lt "$max_sleep_seconds" ]; then
           sleep_seconds=$((sleep_seconds * 2))
-          if [[ "$sleep_seconds" -gt "$max_sleep_seconds" ]]; then
+          if [ "$sleep_seconds" -gt "$max_sleep_seconds" ]; then
             sleep_seconds="$max_sleep_seconds"
           fi
         fi
