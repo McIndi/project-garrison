@@ -1,0 +1,32 @@
+# terraform.tfvars.example — Project Garrison
+#
+# Copy to terraform.tfvars and fill in real values for local runs.
+# terraform.tfvars is gitignored. Never commit real credentials.
+#
+# Sensitive values should be set via environment variables when possible:
+#   TF_VAR_mongo_root_password=<value>
+#   TF_VAR_valkey_password=<value>
+#   TF_VAR_gitea_token=<value>
+
+# --- Deployment ---
+environment = "local"
+
+# --- MongoDB credentials (used by vault-secrets module for DB connection) ---
+mongo_root_username = "root"
+# mongo_root_password = ""   # Set via TF_VAR_mongo_root_password or here
+
+# --- Valkey credentials ---
+# valkey_password = ""        # Set via TF_VAR_valkey_password or here
+
+# --- Gitea ---
+gitea_base_url            = "http://localhost:3001"
+gitea_skills_repo         = "garrison/skills"
+gitea_repo_branch         = "main"
+gitea_provisioning_enabled = false  # flip to true once Gitea + skills repo are ready
+# gitea_token = ""           # Set via TF_VAR_gitea_token or GITEA_TOKEN env var
+
+# --- Container name prefix (for infra health gate) ---
+# container_name_prefix = "projectgarrison"
+
+# --- Vault ---
+vault_addr = "http://127.0.0.1:8200"

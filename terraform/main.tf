@@ -5,6 +5,8 @@ module "infra" {
   environment  = var.environment
   compose_file = var.compose_file
   services     = var.core_services
+  vault_addr            = var.vault_addr
+  container_name_prefix = var.container_name_prefix
 }
 
 module "vault_core" {
@@ -26,6 +28,9 @@ module "vault_secrets" {
   source                 = "../modules/vault-secrets"
   dynamic_secret_roles   = var.dynamic_secret_roles
   enabled_secret_engines = var.enabled_secret_engines
+  mongo_root_username    = var.mongo_root_username
+  mongo_root_password    = var.mongo_root_password
+  valkey_password        = var.valkey_password
   depends_on             = [module.vault_pki]
 }
 
@@ -54,5 +59,10 @@ module "agent_skill" {
   source          = "../modules/agent-skill"
   agent_classes   = var.agent_classes
   skill_repo_path = var.skill_repo_path
+  gitea_skills_repo          = var.gitea_skills_repo
+  gitea_repo_branch          = var.gitea_repo_branch
+  gitea_provisioning_enabled = var.gitea_provisioning_enabled
+  gitea_base_url             = var.gitea_base_url
+  gitea_token                = var.gitea_token
   depends_on      = [module.agent_role]
 }

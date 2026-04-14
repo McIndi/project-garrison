@@ -207,3 +207,66 @@ variable "skill_repo_path" {
   type        = string
   default     = "skills"
 }
+
+# --- Sensitive credentials (set via TF_VAR_* env vars or terraform.tfvars) ---
+
+variable "mongo_root_username" {
+  description = "MongoDB root username used by Vault for dynamic credential management."
+  type        = string
+  default     = "root"
+}
+
+variable "mongo_root_password" {
+  description = "MongoDB root password used by Vault for dynamic credential management."
+  type        = string
+  sensitive   = true
+  default     = "rootpass"
+}
+
+variable "valkey_password" {
+  description = "Valkey (Redis-compatible) password used by Vault database plugin."
+  type        = string
+  sensitive   = true
+  default     = "rootpass"
+}
+
+# --- Container engine ---
+
+variable "container_name_prefix" {
+  description = "Prefix used to construct container names for the infra health gate."
+  type        = string
+  default     = "projectgarrison"
+}
+
+# --- Gitea ---
+
+variable "gitea_base_url" {
+  description = "Base URL of the Gitea instance for skill document publishing."
+  type        = string
+  default     = "http://localhost:3001"
+}
+
+variable "gitea_token" {
+  description = "Gitea personal access token with repo write permission."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "gitea_skills_repo" {
+  description = "Gitea repository (owner/repo) where skill documents are committed."
+  type        = string
+  default     = "garrison/skills"
+}
+
+variable "gitea_repo_branch" {
+  description = "Branch in the Gitea skills repo to commit skill documents to."
+  type        = string
+  default     = "main"
+}
+
+variable "gitea_provisioning_enabled" {
+  description = "Set to true to enable Gitea skill document provisioning. Requires Gitea to be running and skills repo to exist."
+  type        = bool
+  default     = false
+}
