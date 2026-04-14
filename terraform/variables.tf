@@ -79,28 +79,28 @@ variable "agent_classes" {
   description = "Agent class definitions for downstream role/policy/skill modules."
   type = map(object({
     capabilities = list(string)
-    token_ttl    = string
+    token_ttl    = number
     description  = string
   }))
   default = {
     orchestrator = {
       capabilities = ["base", "orchestrate"]
-      token_ttl    = "4h"
+      token_ttl    = 14400
       description  = "Tier 1 query handler. Plans tool use, delegates, manages handoffs."
     }
     rag = {
       capabilities = ["base", "rag"]
-      token_ttl    = "1h"
+      token_ttl    = 3600
       description  = "Retrieval agent. Reads source docs, writes structured summaries."
     }
     code = {
       capabilities = ["base", "code"]
-      token_ttl    = "2h"
+      token_ttl    = 7200
       description  = "Code generation agent. Reads and commits to Gitea."
     }
     analyst = {
       capabilities = ["base"]
-      token_ttl    = "1h"
+      token_ttl    = 3600
       description  = "Read-only analysis. Reads shared memory, writes findings only."
     }
   }

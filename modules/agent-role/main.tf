@@ -11,7 +11,7 @@ terraform {
 variable "agent_classes" {
   type = map(object({
     capabilities = list(string)
-    token_ttl    = string
+    token_ttl    = number
     description  = string
   }))
 }
