@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 GARRISON_TERRAFORM="${GARRISON_TERRAFORM:-false}"
+VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
+GARRISON_VAULT_INIT_FILE="${GARRISON_VAULT_INIT_FILE:-$ROOT_DIR/logs/vault/init.json}"
 
 cd "$ROOT_DIR"
 
@@ -44,7 +46,8 @@ echo "Preparing Vault audit log path permissions..."
 
 echo "Waiting for Vault API readiness..."
 for attempt in $(seq 1 30); do
-	if curl -fsS --max-time 2 "http://127.0.0.1:8200/v1/sys/health" >/dev/null 2>&1; then
+	vault_http_code="$(curl -sS -o /dev/null --max-time 2 -w '%{http_code}' "${VAULT_ADDR}/v1/sys/health" || true)"
+	if [[ "${vault_http_code}" != "000" ]]; then
 		break
 	fi
 	if [[ "$attempt" -eq 30 ]]; then
@@ -53,6 +56,44 @@ for attempt in $(seq 1 30); do
 	fi
 	sleep 2
 done
+
+mkdir -p "$(dirname "${GARRISON_VAULT_INIT_FILE}")"
+
+vault_init_status="$(curl -fsS --max-time 3 "${VAULT_ADDR}/v1/sys/init" || true)"
+if [[ "${vault_init_status}" == *'"initialized":false'* ]]; then
+	echo "Initializing Vault (single unseal key for local/CI automation)..."
+	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" exec -T vault sh -c \
+		'vault operator init -key-shares=1 -key-threshold=1 -format=json' >"${GARRISON_VAULT_INIT_FILE}"
+	chmod 600 "${GARRISON_VAULT_INIT_FILE}"
+fi
+
+if [[ ! -s "${GARRISON_VAULT_INIT_FILE}" ]]; then
+	echo "Vault init file not found at ${GARRISON_VAULT_INIT_FILE}; cannot continue." >&2
+	exit 1
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+	echo "python3 is required to parse ${GARRISON_VAULT_INIT_FILE}" >&2
+	exit 1
+fi
+
+UNSEAL_KEY="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print((d.get("unseal_keys_b64") or [""])[0])' "${GARRISON_VAULT_INIT_FILE}")"
+VAULT_TOKEN="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("root_token", ""))' "${GARRISON_VAULT_INIT_FILE}")"
+
+if [[ -z "${UNSEAL_KEY}" || -z "${VAULT_TOKEN}" ]]; then
+	echo "Failed to parse unseal key or root token from ${GARRISON_VAULT_INIT_FILE}" >&2
+	exit 1
+fi
+
+vault_seal_status="$(curl -fsS --max-time 3 "${VAULT_ADDR}/v1/sys/seal-status" || true)"
+if [[ "${vault_seal_status}" == *'"sealed":true'* ]]; then
+	echo "Unsealing Vault..."
+	curl -fsS -X POST -H "Content-Type: application/json" \
+		-d "{\"key\":\"${UNSEAL_KEY}\"}" \
+		"${VAULT_ADDR}/v1/sys/unseal" >/dev/null
+fi
+
+export VAULT_TOKEN
 
 if [[ "${GARRISON_TERRAFORM}" == "true" ]]; then
 	echo "Configuring Vault baseline for dynamic/auditable secrets via Terraform/OpenTofu..."
