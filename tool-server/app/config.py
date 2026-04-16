@@ -6,6 +6,8 @@ class Settings:
     valkey_url = os.getenv("TOOL_SERVER_VALKEY_URL", "redis://localhost:6379/0")
     mongo_uri = os.getenv("TOOL_SERVER_MONGO_URI", "mongodb://root:rootpass@mongo:27017")
     vault_addr = os.getenv("TOOL_SERVER_VAULT_ADDR", "http://localhost:8200")
+    vault_cacert = os.getenv("TOOL_SERVER_VAULT_CACERT", "")
+    vault_skip_verify = os.getenv("TOOL_SERVER_VAULT_SKIP_VERIFY", "false").lower() == "true"
     vault_token = os.getenv("TOOL_SERVER_VAULT_TOKEN", "")
     require_token_lookup = os.getenv("TOOL_SERVER_REQUIRE_TOKEN_LOOKUP", "false").lower() == "true"
     enforce_token_identity_binding = os.getenv("TOOL_SERVER_ENFORCE_TOKEN_IDENTITY_BINDING", "true").lower() == "true"
@@ -39,3 +41,4 @@ class Settings:
 
 
 settings = Settings()
+settings.vault_verify = False if settings.vault_skip_verify else (settings.vault_cacert or True)

@@ -12,12 +12,14 @@ fi
 
 mkdir -p "$ROOT_DIR/logs/nginx"
 
-if command -v docker >/dev/null 2>&1; then
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   COMPOSE_CMD=(docker compose)
-elif command -v podman >/dev/null 2>&1; then
+elif command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then
   COMPOSE_CMD=(podman compose)
+elif command -v podman-compose >/dev/null 2>&1; then
+  COMPOSE_CMD=(podman-compose)
 else
-  echo "Neither docker nor podman is available"
+  echo "Neither docker compose, podman compose, nor podman-compose is available"
   exit 1
 fi
 
@@ -49,9 +51,16 @@ if ! grep -q '"status":200' /tmp/garrison-nginx-fetch.json; then
 fi
 
 echo "[3/3] Validate nginx access log evidence"
-if ! grep -q "example.com" "$ROOT_DIR/logs/nginx/access.log"; then
-  echo "[FAIL] nginx access.log does not contain example.com request evidence"
-  exit 1
-fi
+for attempt in $(seq 1 10); do
+  if grep -q "example.com" "$ROOT_DIR/logs/nginx/access.log"; then
+    echo "[OK] nginx proxy readiness passed"
+    exit 0
+  fi
+  if [[ "$attempt" -lt 10 ]]; then
+    echo "Waiting for nginx access log evidence (${attempt}/10)..."
+    sleep 1
+  fi
+done
 
-echo "[OK] nginx proxy readiness passed"
+echo "[FAIL] nginx access.log does not contain example.com request evidence"
+exit 1

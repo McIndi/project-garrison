@@ -189,6 +189,10 @@ variable "pki_roles" {
       allowed_domains = ["garrison.local"]
       max_ttl         = "24h"
     }
+    vault-server = {
+      allowed_domains = ["vault", "localhost", "garrison.local"]
+      max_ttl         = "24h"
+    }
   }
 }
 

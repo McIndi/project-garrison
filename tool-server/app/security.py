@@ -44,7 +44,10 @@ def _lookup_identity_claims(payload: dict) -> tuple[str | None, str | None, str 
 
 async def _lookup_vault_token(token: str) -> dict:
     url = f"{settings.vault_addr}/v1/auth/token/lookup-self"
-    async with httpx.AsyncClient(timeout=5) as client:
+    client_kwargs = {"timeout": 5}
+    if settings.vault_verify is not True:
+        client_kwargs["verify"] = settings.vault_verify
+    async with httpx.AsyncClient(**client_kwargs) as client:
         resp = await client.get(url, headers={"X-Vault-Token": token})
     if resp.status_code != 200:
         raise HTTPException(status_code=401, detail="Vault token lookup failed")

@@ -30,6 +30,12 @@ Run bootstrap using containerized Terraform (same network namespace as compose s
 GARRISON_TERRAFORM=true GARRISON_TERRAFORM_CONTAINER=true bash scripts/bootstrap.sh
 ```
 
+Run bootstrap with local Vault TLS enabled. This generates a short-lived self-signed startup certificate, brings Vault up over HTTPS, then replaces it with a Vault PKI-issued listener certificate during bootstrap:
+
+```bash
+GARRISON_VAULT_TLS=true bash scripts/bootstrap.sh
+```
+
 This executes:
 
 - Compose bring-up for core services.
@@ -74,6 +80,7 @@ Optional environment variables:
 - `GARRISON_TERRAFORM=true` to run `tofu/terraform apply` before parity checks.
 - `GARRISON_TERRAFORM_CONTAINER=true` to run Terraform in a container on the compose network.
 - `GARRISON_TERRAFORM_IMAGE` to override the Terraform container image (default: `hashicorp/terraform:1.12.1`; CI uses a custom image with curl installed).
+- `GARRISON_VAULT_TLS=true` to bootstrap Vault with HTTPS using a local self-signed cert and then rotate the listener cert from Vault PKI.
 
 The smoke command validates:
 

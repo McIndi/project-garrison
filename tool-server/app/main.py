@@ -367,7 +367,10 @@ async def _summarize_with_ollama(content: str, max_tokens: int, output_format: s
 
 
 async def _transit_encrypt(plaintext: str, key: str) -> str:
-    async with httpx.AsyncClient(timeout=10) as client:
+    client_kwargs = {"timeout": 10}
+    if settings.vault_verify is not True:
+        client_kwargs["verify"] = settings.vault_verify
+    async with httpx.AsyncClient(**client_kwargs) as client:
         resp = await client.post(
             f"{settings.vault_addr}/v1/transit/encrypt/{key}",
             headers={"X-Vault-Token": settings.vault_token},
@@ -379,7 +382,10 @@ async def _transit_encrypt(plaintext: str, key: str) -> str:
 
 
 async def _transit_decrypt(ciphertext: str, key: str) -> str:
-    async with httpx.AsyncClient(timeout=10) as client:
+    client_kwargs = {"timeout": 10}
+    if settings.vault_verify is not True:
+        client_kwargs["verify"] = settings.vault_verify
+    async with httpx.AsyncClient(**client_kwargs) as client:
         resp = await client.post(
             f"{settings.vault_addr}/v1/transit/decrypt/{key}",
             headers={"X-Vault-Token": settings.vault_token},

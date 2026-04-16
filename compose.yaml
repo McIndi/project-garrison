@@ -22,11 +22,24 @@ services:
 
   vault:
     image: docker.io/hashicorp/vault:1.17
+    environment:
+      VAULT_ADDR: ${VAULT_ADDR:-http://127.0.0.1:8200}
+      VAULT_LOCAL_TLS: ${GARRISON_VAULT_TLS:-false}
+      VAULT_CACERT: /vault/tls/vault-ca.pem
     cap_add:
       - IPC_LOCK
-    command: vault server -config=/vault/config/vault.hcl
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        if [ "$${VAULT_LOCAL_TLS}" = "true" ]; then
+          exec vault server -config=/vault/config/vault-tls.hcl
+        fi
+        exec vault server -config=/vault/config/vault.hcl
     volumes:
       - ./config/vault/vault.hcl:/vault/config/vault.hcl:ro,Z
+      - ./config/vault/vault-tls.hcl:/vault/config/vault-tls.hcl:ro,Z
+      - ./logs/vault/tls:/vault/tls:ro,Z
       - vault-audit-logs:/vault/logs:U
       - vault-data:/vault/data:U
     ports:
@@ -47,7 +60,7 @@ services:
     image: docker.io/library/nginx:1.27-alpine
     volumes:
       - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro,Z
-      - ./logs/nginx:/var/log/nginx:Z
+      - ./logs/nginx:/var/log/nginx:U,Z
     ports:
       - "8088:8088"
     networks:
@@ -123,7 +136,9 @@ services:
       TOOL_SERVER_BEEAI_URL: http://beeai-runtime:8090
       TOOL_SERVER_VALKEY_URL: redis://:${VALKEY_PASSWORD:-rootpass}@valkey:6379/0
       TOOL_SERVER_MONGO_URI: mongodb://${MONGO_ROOT_USERNAME:-root}:${MONGO_ROOT_PASSWORD:-rootpass}@mongo:27017
-      TOOL_SERVER_VAULT_ADDR: http://vault:8200
+      TOOL_SERVER_VAULT_ADDR: ${TOOL_SERVER_VAULT_ADDR:-http://vault:8200}
+      TOOL_SERVER_VAULT_CACERT: ${TOOL_SERVER_VAULT_CACERT:-}
+      TOOL_SERVER_VAULT_SKIP_VERIFY: ${TOOL_SERVER_VAULT_SKIP_VERIFY:-false}
       TOOL_SERVER_VAULT_TOKEN: ${TOOL_SERVER_VAULT_TOKEN:-}
       TOOL_SERVER_REQUIRE_TOKEN_LOOKUP: "true"
       TOOL_SERVER_ENFORCE_TOKEN_IDENTITY_BINDING: "true"
@@ -134,6 +149,8 @@ services:
       TOOL_SERVER_FETCH_PROXY_URL: http://nginx:8088
       TOOL_SERVER_FETCH_REQUIRE_PROXY: "true"
       TOOL_SERVER_AUDIT_INGEST_TOKEN: ${TOOL_SERVER_AUDIT_INGEST_TOKEN:-}
+    volumes:
+      - ./logs/vault/tls:/app/certs/vault:ro,Z
     depends_on:
       - valkey
       - beeai-runtime

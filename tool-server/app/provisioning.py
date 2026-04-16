@@ -39,7 +39,10 @@ class ProvisioningService:
         return self._mongo
 
     async def issue_spawn_credentials(self, agent_class: str) -> VaultSpawnCredentials:
-        async with httpx.AsyncClient(timeout=10) as client:
+        client_kwargs = {"timeout": 10}
+        if settings.vault_verify is not True:
+            client_kwargs["verify"] = settings.vault_verify
+        async with httpx.AsyncClient(**client_kwargs) as client:
             role_id_resp = await client.get(
                 f"{settings.vault_addr}/v1/auth/approle/role/{agent_class}/role-id",
                 headers={"X-Vault-Token": settings.vault_token},
@@ -69,7 +72,10 @@ class ProvisioningService:
         )
 
     async def revoke_accessor(self, accessor: str) -> None:
-        async with httpx.AsyncClient(timeout=10) as client:
+        client_kwargs = {"timeout": 10}
+        if settings.vault_verify is not True:
+            client_kwargs["verify"] = settings.vault_verify
+        async with httpx.AsyncClient(**client_kwargs) as client:
             resp = await client.post(
                 f"{settings.vault_addr}/v1/auth/token/revoke-accessor",
                 headers={"X-Vault-Token": settings.vault_token},

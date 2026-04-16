@@ -19,6 +19,7 @@ module "vault_core" {
 
 module "vault_pki" {
   source           = "../modules/vault-pki"
+  vault_addr       = var.vault_addr
   pki_roles        = var.pki_roles
   issuing_ca_label = var.issuing_ca_label
   depends_on       = [module.vault_core]

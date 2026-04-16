@@ -19,6 +19,10 @@ variable "issuing_ca_label" {
   type = string
 }
 
+variable "vault_addr" {
+  type = string
+}
+
 # ---- Root CA mount ----
 resource "vault_mount" "pki_root" {
   path                      = "pki"
@@ -49,8 +53,8 @@ resource "vault_pki_secret_backend_root_cert" "root" {
 # ---- Root CA CRL / issuing URL configuration ----
 resource "vault_pki_secret_backend_config_urls" "root" {
   backend                 = vault_mount.pki_root.path
-  issuing_certificates    = ["http://vault:8200/v1/pki/ca"]
-  crl_distribution_points = ["http://vault:8200/v1/pki/crl"]
+  issuing_certificates    = ["${var.vault_addr}/v1/pki/ca"]
+  crl_distribution_points = ["${var.vault_addr}/v1/pki/crl"]
 }
 
 # ---- Intermediate CA: generate CSR ----
@@ -81,8 +85,8 @@ resource "vault_pki_secret_backend_intermediate_set_signed" "int" {
 # ---- Intermediate CA CRL / issuing URL configuration ----
 resource "vault_pki_secret_backend_config_urls" "int" {
   backend                 = vault_mount.pki_int.path
-  issuing_certificates    = ["http://vault:8200/v1/pki_int/ca"]
-  crl_distribution_points = ["http://vault:8200/v1/pki_int/crl"]
+  issuing_certificates    = ["${var.vault_addr}/v1/pki_int/ca"]
+  crl_distribution_points = ["${var.vault_addr}/v1/pki_int/crl"]
 
   depends_on = [vault_pki_secret_backend_intermediate_set_signed.int]
 }
@@ -91,13 +95,17 @@ resource "vault_pki_secret_backend_config_urls" "int" {
 resource "vault_pki_secret_backend_role" "roles" {
   for_each = var.pki_roles
 
-  backend          = vault_mount.pki_int.path
-  name             = each.key
-  allowed_domains  = each.value.allowed_domains
-  allow_subdomains = true
-  max_ttl          = each.value.max_ttl
-  key_type         = "rsa"
-  key_bits         = 2048
+  backend            = vault_mount.pki_int.path
+  name               = each.key
+  allowed_domains    = each.value.allowed_domains
+  allow_bare_domains = true
+  allow_subdomains   = true
+  allow_localhost    = true
+  allow_ip_sans      = true
+  server_flag        = true
+  max_ttl            = each.value.max_ttl
+  key_type           = "rsa"
+  key_bits           = 2048
 
   depends_on = [vault_pki_secret_backend_intermediate_set_signed.int]
 }

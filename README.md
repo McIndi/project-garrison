@@ -7,7 +7,7 @@ Project Garrison is an auditable, policy-driven agent runtime. It separates huma
 - Human interaction is through Open WebUI.
 - Runtime control is through tool-server.
 - Agent execution is through a BeeAI runtime stub service.
-- Vault is used for token lookup, AppRole issuance, and transit encryption/decryption.
+- Vault is used for token lookup, AppRole issuance, transit encryption/decryption, and local PKI-backed service certificate issuance.
 - Valkey backs shared memory and registry data.
 - MongoDB stores audit events and per-agent collections.
 - OpenTelemetry Collector is present and exports to debug output in local mode.
@@ -155,6 +155,7 @@ Primary commands from repository root:
 - Full local bootstrap and verification (default script-managed Vault path): bash scripts/bootstrap.sh
 - Full local bootstrap and verification (Terraform Vault path): GARRISON_TERRAFORM=true bash scripts/bootstrap.sh
 - Full local bootstrap and verification (containerized Terraform Vault path): GARRISON_TERRAFORM=true GARRISON_TERRAFORM_CONTAINER=true bash scripts/bootstrap.sh
+- Full local bootstrap with Vault HTTPS bootstrap and PKI rotation: GARRISON_VAULT_TLS=true bash scripts/bootstrap.sh
 - Single command CI-equivalent smoke run (default script path): bash scripts/ci-smoke.sh
 - Single command CI-equivalent smoke run (Terraform Vault path): GARRISON_TERRAFORM=true bash scripts/ci-smoke.sh
 - Single command CI-equivalent smoke run (containerized Terraform Vault path): GARRISON_TERRAFORM=true GARRISON_TERRAFORM_CONTAINER=true bash scripts/ci-smoke.sh

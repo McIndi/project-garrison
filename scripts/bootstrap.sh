@@ -3,8 +3,78 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 GARRISON_TERRAFORM="${GARRISON_TERRAFORM:-false}"
-VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
+GARRISON_VAULT_TLS="${GARRISON_VAULT_TLS:-true}"
+VAULT_SCHEME="http"
+if [[ "${GARRISON_VAULT_TLS}" == "true" ]]; then
+	VAULT_SCHEME="https"
+fi
+VAULT_ADDR="${VAULT_ADDR:-${VAULT_SCHEME}://127.0.0.1:8200}"
+TOOL_SERVER_VAULT_ADDR="${TOOL_SERVER_VAULT_ADDR:-${VAULT_SCHEME}://vault:8200}"
+VAULT_PKI_URL_BASE="${VAULT_PKI_URL_BASE:-${VAULT_SCHEME}://vault:8200}"
+GARRISON_VAULT_TLS_DIR="${GARRISON_VAULT_TLS_DIR:-$ROOT_DIR/logs/vault/tls}"
+GARRISON_VAULT_CA_FILE="${GARRISON_VAULT_CA_FILE:-$GARRISON_VAULT_TLS_DIR/vault-ca.pem}"
 GARRISON_VAULT_INIT_FILE="${GARRISON_VAULT_INIT_FILE:-$ROOT_DIR/logs/vault/init.json}"
+
+ensure_vault_tls_material() {
+	local cert_file="$GARRISON_VAULT_TLS_DIR/vault.crt"
+	local key_file="$GARRISON_VAULT_TLS_DIR/vault.key"
+
+	if [[ "${GARRISON_VAULT_TLS}" != "true" ]]; then
+		export TOOL_SERVER_VAULT_CACERT=""
+		export TOOL_SERVER_VAULT_SKIP_VERIFY="false"
+		return 0
+	fi
+
+	if ! command -v openssl >/dev/null 2>&1; then
+		echo "openssl is required when GARRISON_VAULT_TLS=true" >&2
+		exit 1
+	fi
+
+	mkdir -p "$GARRISON_VAULT_TLS_DIR"
+
+	if [[ -s "$cert_file" && -s "$key_file" ]] && openssl x509 -checkend 86400 -noout -in "$cert_file" >/dev/null 2>&1; then
+		echo "Using existing local Vault TLS certificate material."
+		if [[ ! -f "$GARRISON_VAULT_CA_FILE" ]]; then
+			cp "$cert_file" "$GARRISON_VAULT_CA_FILE"
+		fi
+	else
+		echo "Generating self-signed Vault bootstrap certificate..."
+		openssl req -x509 -newkey rsa:4096 -sha256 -nodes \
+			-keyout "$key_file" \
+			-out "$cert_file" \
+			-days 7 \
+			-subj "/CN=vault" \
+			-addext "subjectAltName=DNS:vault,DNS:localhost,IP:127.0.0.1" \
+			-addext "keyUsage=digitalSignature,keyEncipherment" \
+			-addext "extendedKeyUsage=serverAuth"
+		cp "$cert_file" "$GARRISON_VAULT_CA_FILE"
+		chmod 600 "$key_file"
+		chmod 644 "$cert_file" "$GARRISON_VAULT_CA_FILE"
+	fi
+
+	export CURL_CA_BUNDLE="$GARRISON_VAULT_CA_FILE"
+	export VAULT_CACERT="$GARRISON_VAULT_CA_FILE"
+	export TOOL_SERVER_VAULT_CACERT="/app/certs/vault/vault-ca.pem"
+	export TOOL_SERVER_VAULT_SKIP_VERIFY="false"
+}
+
+wait_for_vault_api() {
+	echo "Waiting for Vault API readiness..."
+	for attempt in $(seq 1 30); do
+		vault_http_code="$(curl -sS -o /dev/null --max-time 2 -w '%{http_code}' "${VAULT_ADDR}/v1/sys/health" || true)"
+		if [[ "${vault_http_code}" != "000" ]]; then
+			return 0
+		fi
+		if [[ "$attempt" -eq 30 ]]; then
+			echo "Vault did not become ready in time"
+			exit 1
+		fi
+		sleep 2
+	done
+}
+
+ensure_vault_tls_material
+export VAULT_ADDR TOOL_SERVER_VAULT_ADDR VAULT_PKI_URL_BASE GARRISON_VAULT_TLS GARRISON_VAULT_TLS_DIR GARRISON_VAULT_CA_FILE
 
 cd "$ROOT_DIR"
 
@@ -17,12 +87,14 @@ if grep -Eiq 'WEBUI_AUTH:\s*"?False"?' "$ROOT_DIR/compose.yaml"; then
 	echo "[WARN] Proceeding with insecure Open WebUI auth because ALLOW_INSECURE_WEBUI_AUTH=true"
 fi
 
-if command -v docker >/dev/null 2>&1; then
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
 	COMPOSE_CMD=(docker compose)
-elif command -v podman >/dev/null 2>&1; then
+elif command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then
 	COMPOSE_CMD=(podman compose)
+elif command -v podman-compose >/dev/null 2>&1; then
+	COMPOSE_CMD=(podman-compose)
 else
-	echo "Neither docker nor podman is available"
+	echo "Neither docker compose, podman compose, nor podman-compose is available"
 	exit 1
 fi
 
@@ -36,26 +108,30 @@ if [[ -z "${TOOL_SERVER_AUDIT_INGEST_TOKEN:-}" ]]; then
 	export TOOL_SERVER_AUDIT_INGEST_TOKEN
 fi
 
+mkdir -p "$ROOT_DIR/logs/nginx"
+touch "$ROOT_DIR/logs/nginx/access.log" "$ROOT_DIR/logs/nginx/error.log"
+chmod 0777 "$ROOT_DIR/logs/nginx"
+chmod 0666 "$ROOT_DIR/logs/nginx/access.log" "$ROOT_DIR/logs/nginx/error.log" || true
+
 echo "Starting core stack..."
 TOOL_SERVER_AUDIT_INGEST_TOKEN="${TOOL_SERVER_AUDIT_INGEST_TOKEN}" \
+	VAULT_ADDR="${VAULT_ADDR}" \
+	GARRISON_VAULT_TLS="${GARRISON_VAULT_TLS}" \
+	TOOL_SERVER_VAULT_ADDR="${TOOL_SERVER_VAULT_ADDR}" \
+	TOOL_SERVER_VAULT_CACERT="${TOOL_SERVER_VAULT_CACERT:-}" \
+	TOOL_SERVER_VAULT_SKIP_VERIFY="${TOOL_SERVER_VAULT_SKIP_VERIFY:-false}" \
 	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d --build \
-	valkey mongo vault beeai-runtime nginx fluent-bit otel-collector keycloak
+	valkey mongo vault beeai-runtime nginx otel-collector keycloak
 
 echo "Preparing Vault audit log path permissions..."
 "${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" exec -T -u root vault sh -c 'mkdir -p /vault/logs && touch /vault/logs/audit.log && chown vault:vault /vault/logs /vault/logs/audit.log && chmod 0700 /vault/logs && chmod 0600 /vault/logs/audit.log' || true
 
-echo "Waiting for Vault API readiness..."
-for attempt in $(seq 1 30); do
-	vault_http_code="$(curl -sS -o /dev/null --max-time 2 -w '%{http_code}' "${VAULT_ADDR}/v1/sys/health" || true)"
-	if [[ "${vault_http_code}" != "000" ]]; then
-		break
-	fi
-	if [[ "$attempt" -eq 30 ]]; then
-		echo "Vault did not become ready in time"
-		exit 1
-	fi
-	sleep 2
-done
+wait_for_vault_api
+
+vault_container_env_prefix="VAULT_ADDR=${VAULT_ADDR}"
+if [[ "${GARRISON_VAULT_TLS}" == "true" ]]; then
+	vault_container_env_prefix="VAULT_ADDR=${VAULT_ADDR} VAULT_CACERT=/vault/tls/vault-ca.pem"
+fi
 
 if ! mkdir -p "$(dirname "${GARRISON_VAULT_INIT_FILE}")" 2>/dev/null; then
 	fallback_init_file="${TMPDIR:-/tmp}/garrison-vault-init.json"
@@ -68,7 +144,7 @@ vault_init_status="$(curl -fsS --max-time 3 "${VAULT_ADDR}/v1/sys/init" || true)
 if [[ "${vault_init_status}" == *'"initialized":false'* ]]; then
 	echo "Initializing Vault (single unseal key for local/CI automation)..."
 	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" exec -T vault sh -c \
-		'vault operator init -key-shares=1 -key-threshold=1 -format=json' >"${GARRISON_VAULT_INIT_FILE}"
+		"${vault_container_env_prefix} vault operator init -address=${VAULT_ADDR} -key-shares=1 -key-threshold=1 -format=json" >"${GARRISON_VAULT_INIT_FILE}"
 	chmod 600 "${GARRISON_VAULT_INIT_FILE}"
 fi
 
@@ -107,6 +183,21 @@ else
 fi
 "$ROOT_DIR/scripts/vault-bootstrap.sh"
 
+if [[ "${GARRISON_VAULT_TLS}" == "true" ]]; then
+	echo "Replacing bootstrap Vault certificate with Vault PKI-issued listener material..."
+	"$ROOT_DIR/scripts/vault-issue-local-cert.sh"
+	echo "Restarting Vault to load rotated TLS certificate..."
+	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" restart vault
+	wait_for_vault_api
+	vault_seal_status="$(curl -fsS --max-time 3 "${VAULT_ADDR}/v1/sys/seal-status" || true)"
+	if [[ "${vault_seal_status}" == *'"sealed":true'* ]]; then
+		echo "Unsealing Vault after TLS certificate rotation..."
+		curl -fsS -X POST -H "Content-Type: application/json" \
+			-d "{\"key\":\"${UNSEAL_KEY}\"}" \
+			"${VAULT_ADDR}/v1/sys/unseal" >/dev/null
+	fi
+fi
+
 if [[ -z "${KEYCLOAK_OPENWEBUI_CLIENT_SECRET:-}" ]]; then
 	KEYCLOAK_OPENWEBUI_CLIENT_SECRET="$(head -c 32 /dev/urandom | base64 | tr -d '=+/\n' | cut -c1-32)"
 	export KEYCLOAK_OPENWEBUI_CLIENT_SECRET
@@ -135,14 +226,26 @@ fi
 
 echo "Starting tool-server with runtime-scoped Vault token..."
 TOOL_SERVER_AUDIT_INGEST_TOKEN="${TOOL_SERVER_AUDIT_INGEST_TOKEN}" \
+	TOOL_SERVER_VAULT_ADDR="${TOOL_SERVER_VAULT_ADDR}" \
+	TOOL_SERVER_VAULT_CACERT="${TOOL_SERVER_VAULT_CACERT:-}" \
+	TOOL_SERVER_VAULT_SKIP_VERIFY="${TOOL_SERVER_VAULT_SKIP_VERIFY:-false}" \
 	TOOL_SERVER_VAULT_TOKEN="${TOOL_SERVER_VAULT_TOKEN_RUNTIME}" \
-	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d tool-server
+	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d --no-deps tool-server
 
 echo "Starting Open WebUI with runtime-scoped orchestrate token..."
 TOOL_SERVER_AUDIT_INGEST_TOKEN="${TOOL_SERVER_AUDIT_INGEST_TOKEN}" \
+	TOOL_SERVER_VAULT_ADDR="${TOOL_SERVER_VAULT_ADDR}" \
+	TOOL_SERVER_VAULT_CACERT="${TOOL_SERVER_VAULT_CACERT:-}" \
+	TOOL_SERVER_VAULT_SKIP_VERIFY="${TOOL_SERVER_VAULT_SKIP_VERIFY:-false}" \
 	TOOL_SERVER_VAULT_TOKEN="${TOOL_SERVER_VAULT_TOKEN_RUNTIME}" \
 	GARRISON_ORCHESTRATE_BEARER_TOKEN="${OPENWEBUI_ORCH_TOKEN}" \
-	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d open-webui
+	"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d --no-deps open-webui
+
+if [[ -n "${TOOL_SERVER_AUDIT_INGEST_TOKEN:-}" ]]; then
+	echo "Starting Fluent Bit after tool-server becomes available..."
+	TOOL_SERVER_AUDIT_INGEST_TOKEN="${TOOL_SERVER_AUDIT_INGEST_TOKEN}" \
+		"${COMPOSE_CMD[@]}" -f "$ROOT_DIR/compose.yaml" up -d --no-deps fluent-bit
+fi
 
 export AUTH_BEARER_TOKEN="${OPENWEBUI_ORCH_TOKEN}"
 

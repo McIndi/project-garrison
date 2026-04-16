@@ -8,17 +8,31 @@ GARRISON_TERRAFORM_IMAGE="${GARRISON_TERRAFORM_IMAGE:-hashicorp/terraform:1.12.1
 
 VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
 VAULT_TOKEN="${VAULT_TOKEN:-root}"
+VAULT_PKI_URL_BASE="${VAULT_PKI_URL_BASE:-$VAULT_ADDR}"
+GARRISON_VAULT_TLS_DIR="${GARRISON_VAULT_TLS_DIR:-$ROOT_DIR/logs/vault/tls}"
+GARRISON_VAULT_CA_FILE="${GARRISON_VAULT_CA_FILE:-$GARRISON_VAULT_TLS_DIR/vault-ca.pem}"
+
+if [[ "${VAULT_ADDR}" == https://* && -f "${GARRISON_VAULT_CA_FILE}" ]]; then
+  export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-$GARRISON_VAULT_CA_FILE}"
+  export VAULT_CACERT="${VAULT_CACERT:-$GARRISON_VAULT_CA_FILE}"
+fi
 
 resolve_compose_runtime() {
-  if command -v docker >/dev/null 2>&1; then
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     RUNTIME_ENGINE="docker"
     COMPOSE_CMD=(docker compose)
     return 0
   fi
 
-  if command -v podman >/dev/null 2>&1; then
+  if command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then
     RUNTIME_ENGINE="podman"
     COMPOSE_CMD=(podman compose)
+    return 0
+  fi
+
+  if command -v podman-compose >/dev/null 2>&1; then
+    RUNTIME_ENGINE="podman"
+    COMPOSE_CMD=(podman-compose)
     return 0
   fi
 
@@ -57,16 +71,49 @@ resolve_vault_network() {
 }
 
 run_terraform_in_container() {
-  local mongo_root_password valkey_password
+  local mongo_root_password valkey_password vault_container_addr
   mongo_root_password="${MONGO_ROOT_PASSWORD:-rootpass}"
   valkey_password="${VALKEY_PASSWORD:-rootpass}"
+  vault_container_addr="http://vault:8200"
+  if [[ "${VAULT_ADDR}" == https://* ]]; then
+    vault_container_addr="https://vault:8200"
+  fi
 
   echo "[Vault bootstrap] Containerized Terraform enabled (image=${GARRISON_TERRAFORM_IMAGE}, network=${VAULT_NETWORK})."
+
+  if [[ -f "${GARRISON_VAULT_CA_FILE}" && "${vault_container_addr}" == https://* ]]; then
+    "${RUNTIME_ENGINE}" run --rm \
+      --network "${VAULT_NETWORK}" \
+      -e TF_IN_AUTOMATION=1 \
+      -e VAULT_ADDR="${vault_container_addr}" \
+      -e VAULT_CACERT="/workspace/logs/vault/tls/vault-ca.pem" \
+      -e VAULT_TOKEN="${VAULT_TOKEN}" \
+      -e TF_VAR_mongo_root_password="${mongo_root_password}" \
+      -e TF_VAR_valkey_password="${valkey_password}" \
+      -v "${ROOT_DIR}:/workspace" \
+      -w /workspace \
+      "${GARRISON_TERRAFORM_IMAGE}" \
+      -chdir=terraform init -backend=false
+
+    "${RUNTIME_ENGINE}" run --rm \
+      --network "${VAULT_NETWORK}" \
+      -e TF_IN_AUTOMATION=1 \
+      -e VAULT_ADDR="${vault_container_addr}" \
+      -e VAULT_CACERT="/workspace/logs/vault/tls/vault-ca.pem" \
+      -e VAULT_TOKEN="${VAULT_TOKEN}" \
+      -e TF_VAR_mongo_root_password="${mongo_root_password}" \
+      -e TF_VAR_valkey_password="${valkey_password}" \
+      -v "${ROOT_DIR}:/workspace" \
+      -w /workspace \
+      "${GARRISON_TERRAFORM_IMAGE}" \
+      -chdir=terraform apply -auto-approve
+    return 0
+  fi
 
   "${RUNTIME_ENGINE}" run --rm \
     --network "${VAULT_NETWORK}" \
     -e TF_IN_AUTOMATION=1 \
-    -e VAULT_ADDR="http://vault:8200" \
+    -e VAULT_ADDR="${vault_container_addr}" \
     -e VAULT_TOKEN="${VAULT_TOKEN}" \
     -e TF_VAR_mongo_root_password="${mongo_root_password}" \
     -e TF_VAR_valkey_password="${valkey_password}" \
@@ -78,7 +125,7 @@ run_terraform_in_container() {
   "${RUNTIME_ENGINE}" run --rm \
     --network "${VAULT_NETWORK}" \
     -e TF_IN_AUTOMATION=1 \
-    -e VAULT_ADDR="http://vault:8200" \
+    -e VAULT_ADDR="${vault_container_addr}" \
     -e VAULT_TOKEN="${VAULT_TOKEN}" \
     -e TF_VAR_mongo_root_password="${mongo_root_password}" \
     -e TF_VAR_valkey_password="${valkey_password}" \
@@ -129,11 +176,17 @@ api_get() {
   curl -fsS -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}${path}"
 }
 
-api_post() {
+api_post_json() {
   local path="$1"
   local payload="$2"
   curl -fsS -X POST -H "X-Vault-Token: ${VAULT_TOKEN}" -H "Content-Type: application/json" \
-    -d "${payload}" "${VAULT_ADDR}${path}" >/dev/null
+    -d "${payload}" "${VAULT_ADDR}${path}"
+}
+
+api_post() {
+  local path="$1"
+  local payload="$2"
+  api_post_json "${path}" "${payload}" >/dev/null
 }
 
 api_post_optional() {
@@ -181,6 +234,48 @@ fi
 if ! api_get "/v1/sys/mounts" | grep -q '"database/"'; then
   api_post "/v1/sys/mounts/database" '{"type":"database"}'
 fi
+
+# Enable PKI engine for local service TLS issuance and listener certificate rotation.
+if ! api_get "/v1/sys/mounts" | grep -q '"pki/"'; then
+  api_post "/v1/sys/mounts/pki" '{"type":"pki","config":{"default_lease_ttl":"1h","max_lease_ttl":"87600h"}}'
+fi
+if ! api_get "/v1/sys/mounts" | grep -q '"pki_int/"'; then
+  api_post "/v1/sys/mounts/pki_int" '{"type":"pki","config":{"default_lease_ttl":"1h","max_lease_ttl":"8760h"}}'
+fi
+
+api_post_optional "/v1/pki/config/urls" "{\"issuing_certificates\":\"${VAULT_PKI_URL_BASE}/v1/pki/ca\",\"crl_distribution_points\":\"${VAULT_PKI_URL_BASE}/v1/pki/crl\"}"
+api_post_optional "/v1/pki_int/config/urls" "{\"issuing_certificates\":\"${VAULT_PKI_URL_BASE}/v1/pki_int/ca\",\"crl_distribution_points\":\"${VAULT_PKI_URL_BASE}/v1/pki_int/crl\"}"
+
+if ! api_get "/v1/pki/cert/ca" >/dev/null 2>&1; then
+  api_post "/v1/pki/root/generate/internal" '{"common_name":"Garrison Root CA","ttl":"87600h","format":"pem","key_type":"rsa","key_bits":4096}'
+fi
+
+if ! api_get "/v1/pki_int/cert/ca" >/dev/null 2>&1; then
+  int_csr="$(api_post_json "/v1/pki_int/intermediate/generate/internal" '{"common_name":"garrison-intermediate Intermediate CA","format":"pem","key_type":"rsa","key_bits":4096}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["csr"])')"
+  signed_payload="$(CSR="${int_csr}" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({
+    "csr": os.environ["CSR"],
+    "common_name": "garrison-intermediate Intermediate CA",
+    "ttl": "8760h",
+    "format": "pem_bundle",
+}))
+PY
+)"
+  signed_bundle="$(api_post_json "/v1/pki/root/sign-intermediate" "${signed_payload}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["certificate"])')"
+  cert_payload="$(CERTIFICATE="${signed_bundle}" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({"certificate": os.environ["CERTIFICATE"]}))
+PY
+)"
+  api_post "/v1/pki_int/intermediate/set-signed" "${cert_payload}"
+fi
+
+api_post_optional "/v1/pki_int/roles/vault-server" '{"allowed_domains":["vault","localhost","garrison.local"],"allow_bare_domains":true,"allow_subdomains":true,"allow_localhost":true,"allow_ip_sans":true,"server_flag":true,"client_flag":false,"ttl":"24h","max_ttl":"72h","key_type":"rsa","key_bits":2048}'
 
 # Ensure transit keys exist.
 api_post "/v1/transit/keys/agent-payload" '{"type":"aes256-gcm96"}' || true
