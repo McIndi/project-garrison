@@ -318,9 +318,18 @@ the `agentstack-ui` redirect URIs/web origins, and the cert SAN.
 
 ## 5. Network / topology
 
-**Same-cluster confirmed.** The current armory implementation uses cross-namespace
-service DNS (`keycloak-service.keycloak.svc.cluster.local`) for all in-cluster
-Keycloak access. The same-cluster topology is the working path.
+**Same-cluster AND same-VM confirmed (DECISION 2026-06-19).** Garrison deploys
+into armory's existing single-node k3s cluster — which, because armory is one
+Fedora Vagrant VM, means the **same VM**. Garrison gets **no Vagrantfile and no
+VM of its own**. It is a separate git repo whose Ansible runs *inside armory's
+VM*, against *armory's kubeconfig*, as a **follow-on after armory's `site.yml`**.
+It therefore assumes armory's platform (k3s, OpenBao, Keycloak operator,
+nginx-ingress, VSO, cert-manager, trust-manager) is already up; a light preflight
+asserts those dependencies rather than provisioning them. The current armory
+implementation uses cross-namespace service DNS
+(`keycloak-service.keycloak.svc.cluster.local`) for all in-cluster Keycloak
+access; garrison reuses that path directly. Namespace (`agentstack`) is the
+isolation boundary between garrison and armory workloads.
 
 - **Target namespace (DECISION — must be made, then enumerated)**: The doc never
   names garrison's AgentStack namespace, yet several mechanisms bind to it: the
@@ -335,12 +344,12 @@ Keycloak access. The same-cluster topology is the working path.
 - **Theme**: Armory runs a stock Keycloak image (not `keycloak-themed`). The Agent
   Stack login theme is not present. If the themed login is desired, garrison or
   armory must import it separately. Cosmetic delta, not a blocker.
-- **Separate-cluster path**: Not currently implemented. If garrison ever runs in a
-  separate cluster, all Keycloak access goes via the public ingress
-  (`https://<armory-host>/realms/agentstack`), DNS must resolve, and only the
-  external CA is needed. The same-cluster internal API calls are replaced by
-  ingress-routed calls, which requires the ingress to expose Keycloak admin
-  endpoints (currently not done and not needed for same-cluster).
+- **Separate-cluster path**: **De-scoped (2026-06-19).** Garrison runs in
+  armory's VM/cluster, so this path is not built. (For reference, were it ever
+  revived: all Keycloak access would go via the public ingress
+  `https://<armory-host>/realms/agentstack`, DNS would have to resolve, only the
+  external CA would be needed, and the ingress would have to expose Keycloak
+  admin endpoints — none of which applies same-cluster.)
 
 ## 6. Carried-over assets garrison should reuse
 
