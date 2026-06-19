@@ -128,9 +128,20 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       ensure `kubernetes`/`PyYAML` present in the VM's Ansible interpreter (these
       are already in armory's VM — verify, don't re-provision a VM).
 - [ ] Fill in `CLAUDE.project.md` from `shared/templates/` — record the
-      module-first + idempotency convention AND the deploy-only/same-VM run model
-      so both are enforced going forward; add garrison to the workspace Project
-      Index.
+      module-first + idempotency convention, the deploy-only/same-VM run model,
+      AND the two-loop dev workflow cheat sheet (inner = redeploy garrison in
+      place; outer = rebuild armory THEN re-run garrison; decision rule: "edited
+      armory? outer. edited only garrison? inner"). Add garrison to the workspace
+      Project Index.
+- [ ] `teardown.yml` playbook (garrison's analog of armory's
+      `teardown_k3s_workloads.yml`, gated by `-e teardown_confirm=true`): helm
+      uninstall the release, delete the `agentstack` ns, `keycloak_realm:
+      state=absent` for the `agentstack` realm, and clean garrison's OpenBao KV
+      paths. This is what makes the inner loop `teardown.yml` → `site.yml` without
+      touching armory.
+- [ ] `bringup-all` convenience wrapper (script or Make target) documenting the
+      forced outer-loop order: armory `site.yml` → garrison `site.yml` (since an
+      armory rebuild wipes garrison's realm + KV state).
 - [ ] Green `ansible-playbook --syntax-check` + `ansible-lint` before any logic.
 
 ### Phase 1 — Realm provisioner `agentstack_keycloak` (~1 day)  ← retires §3.4 audience bug + §module-CA caveat
