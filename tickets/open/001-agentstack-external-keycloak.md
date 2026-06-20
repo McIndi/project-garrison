@@ -36,6 +36,7 @@ server accepts the token (no 401) end-to-end.
 | Implementation vehicle | Ansible, mirroring armory | reqs is written entirely around armory reuse |
 | Realm bootstrap | `KeycloakRealmImport` CR, then REST for clients/scopes | reqs §6 |
 | `directAccessGrantsEnabled` (ROPC) on server client | **start `false`** | reqs §3.2 / §7 — not knowable statically |
+| AgentStack Postgres | **`postgresql.enabled: false`; self-roll `postgres:16` StatefulSet via armory's pattern, wire via `externalDatabase`** | DECISION 2026-06-20 — avoid Bitnami subchart (see Notes) |
 
 ## Engineering principles (apply from the start — non-negotiable)
 
@@ -115,8 +116,19 @@ platform:
 ansible/roles/
   agentstack_keycloak/   # realm + 2 clients + audience scope/mapper + 2 roles + seed admin (REST, on armory KC)
   agentstack_secrets/    # OpenBao KV writes + VSO VaultStaticSecret + trust-manager Bundles (pki-int + pki-ext)
-  agentstack/            # Helm release (external OIDC values) + hostAlias patch + UI ingress
+  agentstack_db/         # self-rolled postgres:16 StatefulSet (armory pattern) + pki-int TLS; NOT the Bitnami subchart
+  agentstack/            # Helm release (external OIDC values, postgresql.enabled:false→externalDatabase) + hostAlias patch + UI ingress
 ```
+
+**No Bitnami runtime dependency.** The chart's bundled `postgresql` is the Bitnami
+subchart (`oci://registry-1.docker.io/bitnamicharts`, 16.x.x) — disabled, and
+replaced by a self-rolled `postgres:16` StatefulSet copied from armory's keycloak
+role (`postgres.yaml.j2`): official image, OpenBao/VSO creds, optional `pki-int`
+TLS already implemented. The other subcharts are NOT Bitnami (`redis`→cloudpirates,
+`seaweedfs`→official, `phoenix`→arizephoenix), so they're used as-is (subject to
+the Phase 2 secret inventory). `common` is `bitnami-common`, a library chart pulled
+only at `helm dependency build` (no runtime image) — low risk, but the bitnamicharts
+OCI registry must be reachable at build time.
 
 The `common` role's `prepare_internal_https_caller.yml`,
 `load_openbao_*_token.yml` task files are imported from armory's pattern (copy or
@@ -215,6 +227,10 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       exists, and the chosen delivery (VSO vs deploy-time Helm value, per
       principle #4). Output is a small table in this ticket; it is the
       authoritative map for the tasks below. **No chart default secret ships.**
+      Note: Postgres creds are NOT delivered to the Bitnami subchart — that
+      subchart is disabled (see `agentstack_db` decision); the DB password is the
+      self-rolled StatefulSet's OpenBao/VSO secret, surfaced to the chart via
+      `externalDatabase.existingSecret`.
 - [ ] Generate-if-absent the two client secrets (never re-randomize on re-run),
       write to OpenBao KV; `VaultStaticSecret` + `Bundle` CRs applied with
       `kubernetes.core.k8s` (templated `definition`). Resulting k8s Secret in
@@ -226,6 +242,12 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       read from OpenBao and injected as Helm values at deploy time.
 - [ ] trust-manager `Bundle`s into `agentstack` ns: `pki-int` (admin API),
       `pki-ext` (OIDC validation over public URL).
+- [ ] **AgentStack Postgres creds + TLS cert** (feeds `agentstack_db`):
+      generate-if-absent DB user/password in OpenBao KV → VSO `VaultStaticSecret`
+      → k8s Secret (keys the chart's `externalDatabase.existingSecret` expects);
+      cert-manager `Certificate` from `openbao-pki-internal` (SAN = the DB service
+      FQDN in `agentstack` ns) for `ssl=on`. Both copied from armory's keycloak
+      role (`vaultstaticsecret.yaml.j2`, the `keycloak_pg_tls_*` Certificate).
 - [ ] `encryptionKey` specifically: generate-if-absent in OpenBao, **inject as a
       Helm value at deploy time** (NOT a synced Secret — no `existingSecret` hook,
       fails silently when empty; reqs §4.5). `auth.nextauthSecret` is delivered
@@ -233,8 +255,18 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       gains audit provenance like everything else.
 
 ### Phase 3 — Deploy `agentstack` (~1 day)
+- [ ] **`agentstack_db`: self-rolled Postgres (before the Helm release).** Apply
+      the `postgres:16` Service + StatefulSet (copied from armory
+      `keycloak/templates/postgres.yaml.j2`) into `agentstack` ns via
+      `kubernetes.core.k8s`, consuming the OpenBao/VSO DB Secret + `pki-int`
+      Certificate from Phase 2; run with `ssl=on`. This replaces the disabled
+      Bitnami subchart.
 - [ ] `kubernetes.core.helm` release (with `kubernetes.core.helm_repository` for
       the chart repo) using `values:`/`values_files:` — `keycloak.enabled: false`,
+      **`postgresql.enabled: false`** + `externalDatabase.{host,port,user,database,
+      existingSecret,ssl: true,sslRootCert}` pointed at the self-rolled DB
+      (host = DB service FQDN; `sslRootCert` = the `pki-int` CA from the
+      trust-manager Bundle),
       `externalOidcProvider.{issuerUrl,uiClientId,serverClientId,existingSecret}`,
       `auth.validateAudience: true`, `auth.basic.enabled: false` (OIDC-only),
       `trustProxyHeaders: true`. Leave `AUTH__OIDC__INSECURE_TRANSPORT` default
@@ -278,6 +310,24 @@ _(running log — decisions, blockers, findings)_
   becomes a light `preflight` that *asserts* armory's platform is up rather than
   provisioning it. Reflected in reqs §5 and Phase 0 above. Separate-cluster path
   is de-scoped.
+- 2026-06-20 — **AgentStack Postgres: self-roll, not Bitnami (DECISION).** The
+  chart's bundled `postgresql` is the Bitnami subchart
+  (`oci://registry-1.docker.io/bitnamicharts` 16.x.x); Bitnami gutted its free
+  catalog in 2025 (versioned images → best-effort `bitnamilegacy`, maintained
+  images behind paid Bitnami Secure Images), and the chart maintainers already
+  migrated `redis` off Bitnami → a supply-chain/maintenance risk. So set
+  `postgresql.enabled: false` and self-roll a `postgres:16` StatefulSet copied
+  from armory's keycloak role (official image, OpenBao/VSO creds, `pki-int` TLS
+  already built), wired via the chart's `externalDatabase` block. Confirmed keys:
+  `externalDatabase.{host,port:5432,user,database,password,existingSecret,
+  ssl:true,sslRootCert}` — `existingSecret` (VSO delivery) + `ssl`/`sslRootCert`
+  exist, which also **resolves the earlier "is client-side DB TLS expressible?"
+  open question (yes)**. Scope check: other subcharts are NOT Bitnami
+  (redis→cloudpirates, seaweedfs→official, phoenix→arize) so used as-is; `common`
+  is bitnami library-only (build-time, low risk). Reqs doc deliberately NOT
+  touched — it's the external-Keycloak spec; the app data tier is out of its
+  scope. NB: if `phoenix.enabled`, check whether Phoenix drags in its own
+  Bitnami-based DB — defer until/unless Phoenix is turned on.
 - 2026-06-20 — **Audit posture decisions.** (1) garrison enables audit events on
   its own `agentstack` realm (login + admin events, `jboss-logging`); armory owns
   the listener transport + retention. (2) **OpenBao becomes the single source of
