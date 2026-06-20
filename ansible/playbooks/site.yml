@@ -1,0 +1,14 @@
+---
+- name: Deploy Agent Stack against external armory Keycloak
+  hosts: all
+  gather_facts: true
+  roles:
+    - role: preflight
+      tags:
+        - always
+        - preflight
+
+    # Next phases will add deploy roles in this order:
+    # - agentstack_keycloak
+    # - agentstack_secrets
+    # - agentstack

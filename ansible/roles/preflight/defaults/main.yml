@@ -1,0 +1,5 @@
+---
+preflight_kubeconfig_path: "{{ garrison_kubeconfig_path }}"
+preflight_expected_services: []
+preflight_expected_deployments: []
+preflight_fail_message: "Armory platform preflight failed."

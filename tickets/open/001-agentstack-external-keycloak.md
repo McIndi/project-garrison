@@ -78,6 +78,25 @@ server accepts the token (no 401) end-to-end.
    abandon the module approach wholesale. Pin the collection versions in
    `requirements.yml`.
 
+4. **OpenBao is the single source of truth for ALL secrets — no chart default,
+   no chart auto-gen accepted (DECISION 2026-06-20).** Every secret the chart
+   consumes or would generate is instead **generated in / sourced from OpenBao**
+   (generate-if-absent, per principle #2). This buys two things: uniform audit
+   provenance (every secret read lands in armory's OpenBao audit device) and a
+   forcing function to **discover and replace every insecure default the chart
+   ships** (e.g. Postgres `admin-password`/`password`, SeaweedFS
+   `agentstack-admin-user`/`agentstack-admin-password`). Delivery splits by
+   whether the chart exposes an `existingSecret` hook:
+   - **Has `existingSecret`** (OIDC client secrets, `postgresql.auth.existingSecret`,
+     Redis auth, etc.) → OpenBao KV → **VSO `VaultStaticSecret`** → referenced k8s
+     Secret.
+   - **No `existingSecret`** (`encryptionKey`, `auth.nextauthSecret` — reqs §4.5)
+     → OpenBao KV → **read by Ansible, injected as a Helm value at deploy time**
+     (NOT a synced Secret; do not fall into the §4.5 trap). `nextauthSecret` is
+     therefore sourced from OpenBao too, **not** left to chart auto-gen.
+   - **No hook + no value input** (rare) → flag for a post-deploy patch or a
+     targeted override; record it in the secret inventory below.
+
 ## Architecture
 
 **Garrison has no VM of its own.** It deploys into armory's existing single-node
@@ -119,12 +138,13 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       to armory's kubeconfig), `common` task patterns, `ansible/playbooks/site.yml`,
       dev inventory, `.ansible-lint`, `.yamllint`. **Do NOT** add a `Vagrantfile`
       or VM-provisioning — garrison runs inside armory's VM.
-- [ ] `preflight` role (replaces armory's heavyweight `env_guard`): assert armory
+- [x] `preflight` role (replaces armory's heavyweight `env_guard`): assert armory
       is up before doing anything — kubeconfig valid, and via
       `kubernetes.core.k8s_info` confirm the Keycloak `Service`/CR, OpenBao,
       nginx-ingress, VSO, and trust-manager are present/Ready. Fail fast with a
       clear "run armory's site.yml first" message if not.
-- [ ] Add `requirements.yml` pinning `kubernetes.core` + `community.general`;
+- [x] Add `requirements.yml` with `kubernetes.core` + `community.general`
+      during development (intentionally unpinned to test latest; pin before demo);
       ensure `kubernetes`/`PyYAML` present in the VM's Ansible interpreter (these
       are already in armory's VM — verify, don't re-provision a VM).
 - [ ] Fill in `CLAUDE.project.md` from `shared/templates/` — record the
@@ -174,20 +194,43 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       `community.general.keycloak_role`/`keycloak_realm_role`; assign
       `agentstack-admin` to the seed user (`keycloak_realm_rolemapping` /
       `keycloak_user`).
+- [ ] **Enable audit events on the `agentstack` realm** (garrison owns this realm;
+      armory owns only the listener/retention pipe — DECISION 2026-06-20). Set
+      `eventsEnabled: true`, keep `jboss-logging` in `eventsListeners`,
+      `adminEventsEnabled: true`, `adminEventsDetailsEnabled: true`, and an
+      `eventsExpiration` — via `community.general.keycloak_realm`
+      (`events_enabled`/`events_listeners`/`admin_events_enabled`/
+      `admin_events_details_enabled`). Gives login + provisioning audit for the
+      app layer (see Notes 2026-06-20).
 
 ### Phase 2 — Secrets + trust `agentstack_secrets` (~½ day)
+- [ ] **Secret inventory & default-hardening (discovery — do this FIRST).**
+      Enumerate **every** secret the chart consumes or auto-generates from
+      `values.yaml` + subchart defaults: OIDC client secrets, `encryptionKey`,
+      `auth.nextauthSecret`, Postgres (`postgresPassword`/`password`, default
+      `admin-password`/`password`), SeaweedFS (`accessKeyID`/`accessKeySecret`,
+      default `agentstack-admin-user`/`agentstack-admin-password`), Redis auth
+      (if enabled), Phoenix, and anything else discovered. For each, record:
+      current default (flag insecure ones), whether an `existingSecret` hook
+      exists, and the chosen delivery (VSO vs deploy-time Helm value, per
+      principle #4). Output is a small table in this ticket; it is the
+      authoritative map for the tasks below. **No chart default secret ships.**
 - [ ] Generate-if-absent the two client secrets (never re-randomize on re-run),
       write to OpenBao KV; `VaultStaticSecret` + `Bundle` CRs applied with
       `kubernetes.core.k8s` (templated `definition`). Resulting k8s Secret in
       `agentstack` ns must carry keys **exactly** `uiClientSecret` /
       `serverClientSecret` (reqs §2, §7 confirmed).
+- [ ] Generate-if-absent and deliver every other inventoried secret per its
+      classification: `existingSecret`-capable ones (Postgres, Redis, …) via VSO
+      `VaultStaticSecret`; hookless ones (`encryptionKey`, `auth.nextauthSecret`)
+      read from OpenBao and injected as Helm values at deploy time.
 - [ ] trust-manager `Bundle`s into `agentstack` ns: `pki-int` (admin API),
       `pki-ext` (OIDC validation over public URL).
-- [ ] Generate-if-absent `encryptionKey`, store in OpenBao, **inject as a Helm
-      value at deploy time** (NOT a synced Secret — no `existingSecret` hook,
-      fails silently when empty; reqs §4.5). Sourcing it from OpenBao (vs
-      regenerating) is what keeps the Helm release idempotent. Let chart own
-      `auth.nextauthSecret`.
+- [ ] `encryptionKey` specifically: generate-if-absent in OpenBao, **inject as a
+      Helm value at deploy time** (NOT a synced Secret — no `existingSecret` hook,
+      fails silently when empty; reqs §4.5). `auth.nextauthSecret` is delivered
+      the same way (OpenBao → Helm value), **not** left to chart auto-gen — so it
+      gains audit provenance like everything else.
 
 ### Phase 3 — Deploy `agentstack` (~1 day)
 - [ ] `kubernetes.core.helm` release (with `kubernetes.core.helm_repository` for
@@ -235,5 +278,31 @@ _(running log — decisions, blockers, findings)_
   becomes a light `preflight` that *asserts* armory's platform is up rather than
   provisioning it. Reflected in reqs §5 and Phase 0 above. Separate-cluster path
   is de-scoped.
+- 2026-06-20 — **Audit posture decisions.** (1) garrison enables audit events on
+  its own `agentstack` realm (login + admin events, `jboss-logging`); armory owns
+  the listener transport + retention. (2) **OpenBao becomes the single source of
+  truth for ALL secrets** (principle #4) — no chart default or chart auto-gen
+  accepted; `nextauthSecret` now sourced from OpenBao too. This doubles as a
+  discovery pass to surface/replace insecure chart defaults (Postgres
+  `admin-password`, SeaweedFS `agentstack-admin-*`). Audit coverage we get for
+  free: OpenBao audit device (every secret read + PKI issue, incl. VSO syncs and
+  cert-manager issuance; armory file device, daily rotate, keep 7) + Keycloak
+  events (auth + IdP-config changes). Residual gap stays the data plane
+  (pgaudit/S3 access logs), a separate decision. Boundary: OpenBao audits up to
+  the k8s Secret; pod-level secret reads need k3s audit (armory's).
+- 2026-06-19 — Phase 0 execution chunk 1 completed in garrison repo:
+      created Ansible scaffold (`.env.example`, `ansible/playbooks/site.yml`, dev
+      inventory, `.ansible-lint`, `.yamllint`), added pinned `ansible/requirements.yml`
+      (`kubernetes.core` + `community.general`), and implemented `ansible/roles/preflight`
+      with module-based checks for required armory services/deployments using
+      `kubernetes.core.k8s_info`. `ansible-playbook --syntax-check`/`ansible-lint`
+      could not be executed on this host because `ansible-playbook` is not installed
+      in the active Windows terminal; validation is deferred to the armory VM.
+- 2026-06-19 — Phase 0 tightening pass: `ansible/requirements.yml` versions were
+      intentionally unpinned to test latest collections during development
+      (explicit note added to file; pin before demo). `preflight` now distinguishes
+      missing deployments from present-but-not-ready deployments and fails readiness
+      if a Deployment is scaled to 0, has `availableReplicas < spec.replicas`, or
+      lacks an `Available=True` condition.
 - Open input still needed before Phase 3: the concrete `<armory-domain>` /
   public Keycloak host string for the issuer URL + UI host.

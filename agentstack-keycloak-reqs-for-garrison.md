@@ -290,7 +290,7 @@ must be supplied at render time.
 | Value | 0.7.2 chart behaviour | Garrison delivery |
 |---|---|---|
 | `encryptionKey` | `encryptionKey: {{ .Values.encryptionKey \| b64enc \| quote }}` — **no fallback, no auto-gen, no validation**. Empty value → empty secret → broken at runtime. | Generate once, store in OpenBao KV, and **inject at deploy time as a Helm value** (Ansible reads it from OpenBao and passes `-e`/`--set`). It cannot be a VSO-synced Secret. |
-| `auth.nextauthSecret` | If empty, the UI secret template auto-generates `randAlphaNum 32` and **persists it** via a `lookup` of `agentstack-ui-secret` (key `authSecret`). | Use the chart default and let it own/persist this value unless you explicitly choose to source it from OpenBao as a Helm value. There is no synced-Secret path here. |
+| `auth.nextauthSecret` | If empty, the UI secret template auto-generates `randAlphaNum 32` and **persists it** via a `lookup` of `agentstack-ui-secret` (key `authSecret`). | **Garrison decision (2026-06-20): source from OpenBao**, not chart auto-gen — generate-if-absent in OpenBao KV, read by Ansible, inject as a Helm value at deploy time (no synced-Secret path here). This gives it the same audit provenance as every other secret (OpenBao is the single source of truth for all secrets). |
 
 > **Why this is called out:** the obvious instinct is "reuse the client-secret
 > VSO pattern for these." That is wrong — there is no `existingSecret` for either.
@@ -433,10 +433,19 @@ isolation boundary between garrison and armory workloads.
       default (`false`, since the issuer is HTTPS). `AUTH_TRUST_HOST` is not
       rendered by the chart and is not needed under the nginx ingress path.
 - [ ] Deliver `encryptionKey` and `auth.nextauthSecret` (§4.5). Neither has an
-      `existingSecret` hook, so the VSO pattern does **not** apply. `encryptionKey`
-      is mandatory and fails silently when empty — generate it, store in OpenBao,
-      and inject as a Helm value at deploy time. `nextauthSecret` can be left for
-      the chart to auto-generate/persist, or supplied as a value.
+      `existingSecret` hook, so the VSO pattern does **not** apply. Both are
+      generated-if-absent in OpenBao, read by Ansible, and injected as Helm values
+      at deploy time. `encryptionKey` is mandatory and fails silently when empty.
+      `nextauthSecret` is **also** sourced from OpenBao (garrison decision
+      2026-06-20), not left to chart auto-gen, so all secrets share one source of
+      truth + audit trail.
+- [ ] **Secret inventory / default-hardening (garrison decision 2026-06-20).**
+      OpenBao is the single source of truth for **all** chart secrets — no chart
+      default or auto-gen ships. Enumerate every secret the chart/subcharts
+      consume (incl. insecure defaults: Postgres `admin-password`/`password`,
+      SeaweedFS `agentstack-admin-user`/`agentstack-admin-password`, Redis auth,
+      Phoenix), classify each by `existingSecret` availability, and deliver via
+      VSO (hooked) or deploy-time Helm value (hookless). See build ticket Phase 2.
 - [ ] Define the AgentStack UI ingress (§4.6): pick the UI hostname, issue its TLS
       cert from the `openbao-pki-external` ClusterIssuer (SAN = UI host),
       set `ingressClassName: nginx`, and keep the host consistent with the

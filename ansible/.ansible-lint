@@ -1,0 +1,24 @@
+---
+# Ansible Lint Configuration
+# See https://ansible.readthedocs.io/projects/lint/
+
+profile: production
+
+exclude_paths:
+  - .git/
+  - .github/
+  - __pycache__/
+  - .molecule/
+  - .tox/
+  - .venv/
+
+warn_list:
+  - experimental
+  - jinja[spacing]
+  - name[casing]
+
+enable_list:
+  - yaml
+
+offline: false
+verbosity: 1

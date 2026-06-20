@@ -1,0 +1,5 @@
+---
+# Intentionally unpinned during development to test latest. PIN BEFORE DEMO.
+collections:
+  - name: kubernetes.core
+  - name: community.general

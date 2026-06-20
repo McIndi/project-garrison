@@ -1,0 +1,144 @@
+---
+- name: Assert preflight inputs
+  ansible.builtin.assert:
+    that:
+      - (preflight_kubeconfig_path | default('') | trim | length) > 0
+      - preflight_expected_services | length > 0
+      - preflight_expected_deployments | length > 0
+    fail_msg: >-
+      Missing required preflight inputs. Set garrison_kubeconfig_path,
+      preflight_expected_services, and preflight_expected_deployments.
+
+- name: Check kubeconfig file exists
+  ansible.builtin.stat:
+    path: "{{ preflight_kubeconfig_path }}"
+  register: _preflight_kubeconfig_stat
+  changed_when: false
+
+- name: Assert kubeconfig is present
+  ansible.builtin.assert:
+    that:
+      - _preflight_kubeconfig_stat.stat.exists
+    fail_msg: >-
+      Kubeconfig not found at {{ preflight_kubeconfig_path }}. {{ preflight_fail_message }}
+
+- name: Verify required services exist
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Service
+    namespace: "{{ item.namespace }}"
+    name: "{{ item.name }}"
+    kubeconfig: "{{ preflight_kubeconfig_path }}"
+  loop: "{{ preflight_expected_services }}"
+  loop_control:
+    label: "{{ item.namespace }}/{{ item.name }}"
+  register: _preflight_service_checks
+  changed_when: false
+
+- name: Verify required deployments exist
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ item.namespace }}"
+    name: "{{ item.name }}"
+    kubeconfig: "{{ preflight_kubeconfig_path }}"
+  loop: "{{ preflight_expected_deployments }}"
+  loop_control:
+    label: "{{ item.namespace }}/{{ item.name }}"
+  register: _preflight_deployment_checks
+  changed_when: false
+
+- name: Collect missing services
+  ansible.builtin.set_fact:
+    _preflight_missing_services: >-
+      {{
+        _preflight_service_checks.results
+        | rejectattr('resources', 'defined')
+        | map(attribute='item')
+        | list
+        + (
+          _preflight_service_checks.results
+          | selectattr('resources', 'defined')
+          | selectattr('resources', 'equalto', [])
+          | map(attribute='item')
+          | list
+        )
+      }}
+  changed_when: false
+
+- name: Collect missing deployments
+  ansible.builtin.set_fact:
+    _preflight_missing_deployments: >-
+      {{
+        _preflight_deployment_checks.results
+        | rejectattr('resources', 'defined')
+        | map(attribute='item')
+        | list
+        + (
+          _preflight_deployment_checks.results
+          | selectattr('resources', 'defined')
+          | selectattr('resources', 'equalto', [])
+          | map(attribute='item')
+          | list
+        )
+      }}
+  changed_when: false
+
+- name: Collect deployments that are present but not ready
+  ansible.builtin.set_fact:
+    _preflight_not_ready_deployments: >-
+      {%- set ns = namespace(items=[]) -%}
+      {%- for result in (_preflight_deployment_checks.results | default([])) -%}
+      {%- if (result.resources | default([]) | length) > 0 -%}
+      {%- set deployment = (result.resources | first) -%}
+      {%- set desired_replicas = (deployment.spec.replicas | default(1) | int) -%}
+      {%- set available_replicas = (deployment.status.availableReplicas | default(0) | int) -%}
+      {%- set has_available_condition = (
+            (deployment.status.conditions | default([])
+            | selectattr('type', 'equalto', 'Available')
+            | selectattr('status', 'equalto', 'True')
+            | list
+            | length) > 0
+          ) -%}
+      {%- if desired_replicas < 1 -%}
+      {%- set _ = ns.items.append({
+            'namespace': result.item.namespace,
+            'name': result.item.name,
+            'reason': 'scaled to 0 replicas'
+          }) -%}
+      {%- elif available_replicas < desired_replicas -%}
+      {%- set _ = ns.items.append({
+            'namespace': result.item.namespace,
+            'name': result.item.name,
+            'reason': 'availableReplicas=' + (available_replicas | string) + ' < spec.replicas=' + (desired_replicas | string)
+          }) -%}
+      {%- elif not has_available_condition -%}
+      {%- set _ = ns.items.append({
+            'namespace': result.item.namespace,
+            'name': result.item.name,
+            'reason': 'missing Available=True condition'
+          }) -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ ns.items }}
+  changed_when: false
+
+- name: Assert dependencies are ready
+  ansible.builtin.assert:
+    that:
+      - (_preflight_missing_services | length) == 0
+      - (_preflight_missing_deployments | length) == 0
+      - (_preflight_not_ready_deployments | length) == 0
+    fail_msg: >-
+      {{ preflight_fail_message }}
+      Missing services={{ _preflight_missing_services | to_json }}
+      Missing deployments={{ _preflight_missing_deployments | to_json }}
+      Present but not ready deployments={{ _preflight_not_ready_deployments | to_json }}
+
+- name: Preflight summary
+  ansible.builtin.debug:
+    msg: >-
+      Preflight checks passed for kubeconfig={{ preflight_kubeconfig_path }};
+      services={{ preflight_expected_services | length }},
+      deployments={{ preflight_expected_deployments | length }}.
