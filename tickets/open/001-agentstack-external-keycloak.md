@@ -159,12 +159,11 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       during development (intentionally unpinned to test latest; pin before demo);
       ensure `kubernetes`/`PyYAML` present in the VM's Ansible interpreter (these
       are already in armory's VM — verify, don't re-provision a VM).
-- [ ] Fill in `CLAUDE.project.md` from `shared/templates/` — record the
+- [ ] Write `AGENTS.md`: record the
       module-first + idempotency convention, the deploy-only/same-VM run model,
       AND the two-loop dev workflow cheat sheet (inner = redeploy garrison in
       place; outer = rebuild armory THEN re-run garrison; decision rule: "edited
-      armory? outer. edited only garrison? inner"). Add garrison to the workspace
-      Project Index.
+      armory? outer. edited only garrison? inner").
 - [ ] `teardown.yml` playbook (garrison's analog of armory's
       `teardown_k3s_workloads.yml`, gated by `-e teardown_confirm=true`): helm
       uninstall the release, delete the `agentstack` ns, `keycloak_realm:
@@ -174,7 +173,7 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
 - [ ] `bringup-all` convenience wrapper (script or Make target) documenting the
       forced outer-loop order: armory `site.yml` → garrison `site.yml` (since an
       armory rebuild wipes garrison's realm + KV state).
-- [ ] Green `ansible-playbook --syntax-check` + `ansible-lint` before any logic.
+- [X] Green `ansible-playbook --syntax-check` + `ansible-lint` before any logic.
 
 ### Phase 1 — Realm provisioner `agentstack_keycloak` (~1 day)  ← retires §3.4 audience bug + §module-CA caveat
 - [ ] **First, prove the module→internal-CA path** (the principle #3 caveat):
@@ -310,6 +309,13 @@ _(running log — decisions, blockers, findings)_
   becomes a light `preflight` that *asserts* armory's platform is up rather than
   provisioning it. Reflected in reqs §5 and Phase 0 above. Separate-cluster path
   is de-scoped.
+- 2026-06-20 — **Phase 0 validated in VM.** `site.yml` (preflight only) ran green
+  on a VM pre-provisioned with armory → syntax-check implicitly passes and the
+  preflight readiness logic works against real armory resources. Phase 0 done for
+  practical purposes. Remaining Phase 0 housekeeping is non-blocking and can ride
+  alongside Phase 1: `CLAUDE.project.md`, `teardown.yml` (naturally grows as
+  Phase 1+ creates tear-downable state), `bringup-all`. **Next: Phase 1, starting
+  with the module→internal-CA proof spike.**
 - 2026-06-20 — **AgentStack Postgres: self-roll, not Bitnami (DECISION).** The
   chart's bundled `postgresql` is the Bitnami subchart
   (`oci://registry-1.docker.io/bitnamicharts` 16.x.x); Bitnami gutted its free
