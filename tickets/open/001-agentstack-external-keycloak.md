@@ -159,11 +159,10 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       during development (intentionally unpinned to test latest; pin before demo);
       ensure `kubernetes`/`PyYAML` present in the VM's Ansible interpreter (these
       are already in armory's VM — verify, don't re-provision a VM).
-- [ ] Write `AGENTS.md`: record the
-      module-first + idempotency convention, the deploy-only/same-VM run model,
-      AND the two-loop dev workflow cheat sheet (inner = redeploy garrison in
-      place; outer = rebuild armory THEN re-run garrison; decision rule: "edited
-      armory? outer. edited only garrison? inner").
+- [x] Write `AGENTS.md`: records module-first + idempotency, the deploy-only/
+      same-VM run model, the two-loop dev workflow, all-secrets-via-OpenBao, the
+      no-Bitnami Postgres decision, and key decisions — so handoffs stay lean
+      (agents auto-read it). Drafted 2026-06-20, pending your review.
 - [ ] `teardown.yml` playbook (garrison's analog of armory's
       `teardown_k3s_workloads.yml`, gated by `-e teardown_confirm=true`): helm
       uninstall the release, delete the `agentstack` ns, `keycloak_realm:
@@ -313,7 +312,7 @@ _(running log — decisions, blockers, findings)_
   on a VM pre-provisioned with armory → syntax-check implicitly passes and the
   preflight readiness logic works against real armory resources. Phase 0 done for
   practical purposes. Remaining Phase 0 housekeeping is non-blocking and can ride
-  alongside Phase 1: `CLAUDE.project.md`, `teardown.yml` (naturally grows as
+  alongside Phase 1: `AGENTS.md`, `teardown.yml` (naturally grows as
   Phase 1+ creates tear-downable state), `bringup-all`. **Next: Phase 1, starting
   with the module→internal-CA proof spike.**
 - 2026-06-20 — **AgentStack Postgres: self-roll, not Bitnami (DECISION).** The
