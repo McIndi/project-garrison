@@ -1,0 +1,155 @@
+---
+# Teardown playbook — garrison's analog of armory's teardown_k3s_workloads.yml
+#
+# Gated by -e teardown_confirm=true to prevent accidental destruction.
+# Destroys all garrison-managed state:
+#   - Helm release (agentstack)
+#   - Kubernetes namespace (agentstack)
+#   - Keycloak realm (agentstack)
+#   - OpenBao KV paths (garrison's secrets)
+#
+# Run model: inner-loop reset (does not touch armory).
+#   After teardown, `site.yml` will converge cleanly (all create-if-absent logic fires).
+#
+# Usage:
+#   ansible-playbook playbooks/teardown.yml -e teardown_confirm=true
+
+- name: Teardown garrison
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Hardcoded garrison defaults; override via -e if needed.
+    agentstack_namespace: agentstack
+    agentstack_realm: agentstack
+    openbao_garrison_kv_path: secret/data/garrison
+
+  pre_tasks:
+    - name: Safety gate — require explicit confirmation
+      block:
+        - name: Fail unless teardown_confirm is true
+          assert:
+            that:
+              - teardown_confirm is defined
+              - teardown_confirm | bool
+            fail_msg: |
+              Teardown requires explicit confirmation to prevent accidents.
+              Re-run with:  ansible-playbook playbooks/teardown.yml -e teardown_confirm=true
+      rescue:
+        - name: Print safety message
+          debug:
+            msg: |
+              ⚠️  Teardown requires -e teardown_confirm=true
+              This will DESTROY:
+                - Helm release 'agentstack' in {{ agentstack_namespace }}
+                - Kubernetes namespace {{ agentstack_namespace }}
+                - Keycloak realm {{ agentstack_realm }}
+                - OpenBao KV paths under {{ openbao_garrison_kv_path }}
+              Only proceed if you are sure.
+          run_once: true
+        - name: Exit with clear message
+          fail:
+            msg: Teardown cancelled (safety gate). Use -e teardown_confirm=true to override.
+
+  tasks:
+    - name: Load common tasks (internal-CA, admin token)
+      import_tasks: ../../project-armory/ansible/roles/common/tasks/prepare_internal_https_caller.yml
+
+    - name: Load OpenBao token for admin access
+      import_tasks: ../../project-armory/ansible/roles/common/tasks/load_openbao_token_for_admin_client.yml
+
+    - name: Delete Helm release
+      block:
+        - name: Helm uninstall agentstack
+          kubernetes.core.helm:
+            release_name: agentstack
+            namespace: "{{ agentstack_namespace }}"
+            state: absent
+            kubeconfig: "{{ lookup('env', 'ARMORY_KUBECONFIG_PATH') }}"
+          changed_when: true  # helm uninstall doesn't report changed accurately; be explicit
+
+        - name: Debug — Helm release deleted
+          debug:
+            msg: "Helm release 'agentstack' uninstalled"
+      rescue:
+        - name: Warn if release not found (already deleted)
+          debug:
+            msg: "Note: Helm release 'agentstack' not found (may already be deleted)"
+
+    - name: Delete Kubernetes namespace
+      block:
+        - name: Delete agentstack namespace
+          kubernetes.core.k8s:
+            name: "{{ agentstack_namespace }}"
+            api_version: v1
+            kind: Namespace
+            state: absent
+            kubeconfig: "{{ lookup('env', 'ARMORY_KUBECONFIG_PATH') }}"
+            wait: true
+            wait_timeout: 300
+
+        - name: Debug — Namespace deleted
+          debug:
+            msg: "Namespace '{{ agentstack_namespace }}' deleted"
+      rescue:
+        - name: Warn if namespace not found
+          debug:
+            msg: "Note: Namespace '{{ agentstack_namespace }}' not found (may already be deleted)"
+
+    - name: Delete Keycloak realm
+      block:
+        - name: Delete agentstack realm from Keycloak
+          community.general.keycloak_realm:
+            auth_client_id: admin-cli
+            auth_keycloak_url: "https://keycloak-service.keycloak.svc.cluster.local:8443"
+            auth_realm: master
+            auth_username: "{{ lookup('env', 'KEYCLOAK_ADMIN_USER') }}"
+            auth_password: "{{ lookup('env', 'KEYCLOAK_ADMIN_PASSWORD') }}"
+            realm: "{{ agentstack_realm }}"
+            state: absent
+            validate_certs: true
+            ca_path: "{{ internal_ca_bundle_path }}"
+          environment:
+            # Fallback for ca_path if the module version doesn't support the ca_path param
+            REQUESTS_CA_BUNDLE: "{{ internal_ca_bundle_path }}"
+            SSL_CERT_FILE: "{{ internal_ca_bundle_path }}"
+
+        - name: Debug — Keycloak realm deleted
+          debug:
+            msg: "Keycloak realm '{{ agentstack_realm }}' deleted"
+      rescue:
+        - name: Warn if realm not found
+          debug:
+            msg: "Note: Keycloak realm '{{ agentstack_realm }}' not found (may already be deleted)"
+
+    - name: Clean OpenBao KV paths
+      block:
+        - name: Delete OpenBao KV paths for garrison secrets
+          ansible.builtin.uri:
+            url: "{{ openbao_addr }}/v1/{{ openbao_garrison_kv_path }}"
+            method: DELETE
+            headers:
+              X-Vault-Token: "{{ openbao_admin_token }}"
+              X-Vault-Request: "true"
+            status_code:
+              - 204  # Success (no content)
+              - 404  # Not found (already deleted)
+            validate_certs: true
+            ca_path: "{{ internal_ca_bundle_path }}"
+          register: openbao_delete_result
+          changed_when: openbao_delete_result.status == 204
+
+        - name: Debug — OpenBao KV cleaned
+          debug:
+            msg: "OpenBao KV path '{{ openbao_garrison_kv_path }}' cleaned (status: {{ openbao_delete_result.status }})"
+
+  post_tasks:
+    - name: Summary
+      debug:
+        msg: |
+          ✓ Teardown complete
+          Garrison state destroyed:
+            - Helm release uninstalled
+            - agentstack namespace deleted
+            - agentstack realm removed from Keycloak
+            - OpenBao KV paths cleaned
+          Next: ansible-playbook playbooks/site.yml (to rebuild cleanly)

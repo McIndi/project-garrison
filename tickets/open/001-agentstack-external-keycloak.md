@@ -130,13 +130,13 @@ the Phase 2 secret inventory). `common` is `bitnami-common`, a library chart pul
 only at `helm dependency build` (no runtime image) — low risk, but the bitnamicharts
 OCI registry must be reachable at build time.
 
-The `common` role's `prepare_internal_https_caller.yml`,
-`load_openbao_*_token.yml` task files are imported from armory's pattern (copy or
-reference) — they encapsulate internal-CA acquisition for the HTTPS-only
-(port 8443) Keycloak admin API (reqs §4.2, §6). The acquired CA bundle is what
-the `community.general.keycloak_*` modules consume (`ca_path` /
-`REQUESTS_CA_BUNDLE`), so this stays relevant even though we're not hand-rolling
-REST.
+The internal-CA acquisition + OpenBao-token logic is **vendored (copied) into
+garrison** as its own `common` role/tasks — **never imported from armory's repo by
+filesystem path** (armory's location isn't guaranteed; cross-repo path imports
+broke teardown.yml on 2026-06-20). Adapt armory's *pattern*
+(`prepare_internal_https_caller.yml`, `load_openbao_*_token.yml`) into
+garrison-local, parameterized tasks. The acquired CA bundle is what the
+`community.general.keycloak_*` modules consume (`ca_path` / `REQUESTS_CA_BUNDLE`).
 
 Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
 (for the `keycloak_*` modules), installed in the VM via
@@ -146,7 +146,7 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
 ## Tasks (phased to retire the two known unknowns early)
 
 ### Phase 0 — Scaffold (~½ day)  ← deploy-only, NO Vagrantfile/VM
-- [ ] Clone armory's *conventions* into garrison: `.env.example` (incl. pointer
+- [X] Clone armory's *conventions* into garrison: `.env.example` (incl. pointer
       to armory's kubeconfig), `common` task patterns, `ansible/playbooks/site.yml`,
       dev inventory, `.ansible-lint`, `.yamllint`. **Do NOT** add a `Vagrantfile`
       or VM-provisioning — garrison runs inside armory's VM.
@@ -308,6 +308,32 @@ _(running log — decisions, blockers, findings)_
   becomes a light `preflight` that *asserts* armory's platform is up rather than
   provisioning it. Reflected in reqs §5 and Phase 0 above. Separate-cluster path
   is de-scoped.
+- 2026-06-21 — **OpenBao auth: garrison self-bootstraps (DECISION).** Mirror
+  armory's pattern (scoped provisioner token minted from root + per-consumer VSO
+  k8s-auth roles) but with garrison-OWNED artifacts — never reuse armory's token/
+  policies. Garrison runs a one-time privileged bootstrap that reads the OpenBao
+  **root token from a k8s Secret** (garrison uses it once → creates its own
+  `garrison-provisioner` policy/token + read-policies + k8s-auth roles → never
+  persists root). **RESOLVED 2026-06-21: read root from the Vault file**, not a
+  k8s Secret (no such Secret exists). Garrison vendors armory's break-glass
+  `load_openbao_root_token.yml` pattern: `ansible-vault decrypt` of
+  `/opt/openbao/init-keys.yml` with `/opt/openbao/.vault-pass` (both root-readable
+  VM files; paths via vars), `no_log`, as root. Root used once → mint a scoped
+  `garrison-provisioner` token + write garrison policies + VSO k8s-auth roles →
+  root never persisted. This is garrison's sole permitted touch of an armory
+  artifact (documented exception in AGENTS.md). Day-to-day KV writes use the
+  scoped token, not root; reads use VSO k8s-auth. This unblocks teardown's KV
+  cleanup and all of Phase 2.
+- 2026-06-20 — **teardown.yml broke: cross-repo path import.** Copilot built
+  teardown.yml importing `../../project-armory/ansible/roles/common/tasks/...`,
+  which resolves to a non-existent path on the VM and violates self-containment.
+  Root cause: teardown jumped ahead of its foundation (the vendored internal-CA +
+  admin-token plumbing). Corrective sequence: (1) build the CA-proof spike as a
+  **garrison-vendored** `common` (CA bundle from `openbao-ca` secret; admin creds
+  from `keycloak-bootstrap-admin` secret, NOT env vars); (2) rebuild teardown on
+  top. Guard added to AGENTS.md: never path-reference armory's repo — vendor
+  copies. Also note: `.env.example` assumes `/vagrant/project-*` but the VM has
+  garrison at `/opt/garrison/project-garrison` — verify/repair the env paths.
 - 2026-06-20 — **Phase 0 validated in VM.** `site.yml` (preflight only) ran green
   on a VM pre-provisioned with armory → syntax-check implicitly passes and the
   preflight readiness logic works against real armory resources. Phase 0 done for
