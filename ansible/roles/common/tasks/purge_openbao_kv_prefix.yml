@@ -1,0 +1,64 @@
+---
+# Common task: purge_openbao_kv_prefix.yml
+#
+# Purge every secret (ALL versions + metadata) directly under a KV v2 prefix.
+# Garrison's KV layout is FLAT (secrets live directly under the prefix), so a
+# single-level LIST + metadata DELETE fully cleans it. KV v2 has no recursive
+# delete, and deleting under data/ only soft-deletes the latest version (leaving
+# history + metadata); deleting under metadata/ removes all versions.
+#
+# Requires (facts/vars in scope):
+#   openbao_addr, openbao_provisioner_token, openbao_tls_verify,
+#   internal_ca_bundle_path
+# Input var:
+#   purge_kv_metadata_path — full path after /v1/, NO trailing slash,
+#     e.g. "secret/metadata/garrison"
+#
+# The LIST URL uses a trailing slash so it matches the provisioner policy's
+# metadata/<prefix>/* list grant (verified 2026-06-22 — the bare, no-slash
+# path is denied).
+
+- name: "List KV entries under {{ purge_kv_metadata_path }}/"
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/{{ purge_kv_metadata_path }}/?list=true"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ openbao_provisioner_token }}"
+      X-Vault-Request: "true"
+    status_code:
+      - 200  # entries found
+      - 404  # prefix empty / absent — nothing to purge
+    validate_certs: "{{ openbao_tls_verify }}"
+    ca_path: "{{ internal_ca_bundle_path }}"
+  register: _kv_purge_list
+  changed_when: false
+  no_log: "{{ not (garrison_log_nolog | default(false) | bool) }}"
+
+- name: "Purge secrets under {{ purge_kv_metadata_path }}"
+  when: _kv_purge_list.status == 200
+  block:
+    - name: "Delete leaf secrets (all versions) under {{ purge_kv_metadata_path }}"
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/{{ purge_kv_metadata_path }}/{{ item }}"
+        method: DELETE
+        headers:
+          X-Vault-Token: "{{ openbao_provisioner_token }}"
+          X-Vault-Request: "true"
+        status_code:
+          - 204  # deleted
+          - 404  # already gone
+        validate_certs: "{{ openbao_tls_verify }}"
+        ca_path: "{{ internal_ca_bundle_path }}"
+      loop: "{{ _kv_purge_list.json.data['keys'] | reject('match', '.*/$') | list }}"
+      changed_when: true
+      no_log: "{{ not (garrison_log_nolog | default(false) | bool) }}"
+
+    - name: "Warn on nested KV folders (not purged — garrison layout is flat)"
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: nested KV folders found under {{ purge_kv_metadata_path }}/ and
+          were NOT purged:
+          {{ _kv_purge_list.json.data['keys'] | select('match', '.*/$') | list }}.
+          Garrison's KV layout is expected to be flat; delete these manually or
+          extend the teardown if nesting becomes intentional.
+      when: (_kv_purge_list.json.data['keys'] | select('match', '.*/$') | list | length) > 0

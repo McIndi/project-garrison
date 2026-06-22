@@ -21,8 +21,9 @@
     # Hardcoded garrison defaults; override via -e if needed.
     agentstack_namespace: agentstack
     agentstack_realm: agentstack
-    # OpenBao KV path for garrison secrets (derived from common defaults).
-    openbao_garrison_kv_path: "{{ openbao_kv_mount }}/data/{{ openbao_kv_prefix }}"
+    # OpenBao KV v2 metadata prefix for garrison secrets (derived from common
+    # defaults). Purge happens via metadata/ to remove ALL versions, not data/.
+    openbao_garrison_kv_path: "{{ openbao_kv_mount }}/metadata/{{ openbao_kv_prefix }}"
 
   pre_tasks:
     - name: Safety gate — require explicit confirmation
@@ -52,14 +53,25 @@
             msg: Teardown cancelled (safety gate). Use -e teardown_confirm=true to override.
 
   tasks:
-    - name: Prepare internal HTTPS caller (internal-CA bundle for TLS validation)
-      ansible.builtin.include_tasks: ../roles/common/tasks/prepare_internal_https_caller.yml
+    # Use include_role (tasks_from) rather than include_tasks so the common
+    # role's defaults/main.yml loads — several vendored helpers reference vars
+    # defined only there (openbao_provisioner_policy_name,
+    # openbao_provisioner_token_ttl, keycloak_bootstrap_admin_*). group_vars
+    # still overrides wherever it defines a value (higher precedence).
+    - name: Prepare internal HTTPS caller (combined internal-CA bundle for TLS validation)
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: prepare_internal_https_caller.yml
 
     - name: Prepare OpenBao provisioner token (read root, mint scoped token for KV cleanup)
-      ansible.builtin.include_tasks: ../roles/common/tasks/prepare_openbao_provisioner_token.yml
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: prepare_openbao_provisioner_token.yml
 
     - name: Prepare Keycloak bootstrap admin credentials (for realm deletion)
-      ansible.builtin.include_tasks: ../roles/common/tasks/prepare_keycloak_bootstrap_admin.yml
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: prepare_keycloak_bootstrap_admin.yml
 
     - name: Delete Helm release
       block:
@@ -111,11 +123,10 @@
             realm: "{{ agentstack_realm }}"
             state: absent
             validate_certs: "{{ keycloak_tls_verify }}"
+            # ca_path is the real trust mechanism here — keycloak_realm accepts it.
+            # (No SSL_CERT_FILE/REQUESTS_CA_BUNDLE env fallback: open_url ignores
+            # those, so it would be dead weight — verified 2026-06-22.)
             ca_path: "{{ internal_ca_bundle_path }}"
-          environment:
-            # Fallback for ca_path if the module version doesn't support the ca_path param
-            REQUESTS_CA_BUNDLE: "{{ internal_ca_bundle_path }}"
-            SSL_CERT_FILE: "{{ internal_ca_bundle_path }}"
           no_log: true
 
         - name: Debug — Keycloak realm deleted
@@ -126,27 +137,20 @@
           debug:
             msg: "Note: Keycloak realm '{{ agentstack_realm }}' not found (may already be deleted)"
 
-    - name: Clean OpenBao KV paths
+    - name: Clean OpenBao KV paths (recursive metadata purge under garrison prefix)
       block:
-        - name: Delete OpenBao KV paths for garrison secrets
-          ansible.builtin.uri:
-            url: "{{ openbao_addr }}/v1/{{ openbao_garrison_kv_path }}"
-            method: DELETE
-            headers:
-              X-Vault-Token: "{{ openbao_provisioner_token }}"
-              X-Vault-Request: "true"
-            status_code:
-              - 204  # Success (no content)
-              - 404  # Not found (already deleted)
-            validate_certs: "{{ openbao_tls_verify }}"
-            ca_path: "{{ internal_ca_bundle_path }}"
-          register: openbao_delete_result
-          changed_when: openbao_delete_result.status == 204
-          no_log: true
+        - name: Purge all garrison secrets (all versions) under the KV prefix
+          ansible.builtin.include_tasks: ../roles/common/tasks/purge_openbao_kv_prefix.yml
+          vars:
+            purge_kv_metadata_path: "{{ openbao_garrison_kv_path }}"
 
         - name: Debug — OpenBao KV cleaned
           debug:
-            msg: "OpenBao KV path '{{ openbao_garrison_kv_path }}' cleaned (status: {{ openbao_delete_result.status }})"
+            msg: "OpenBao KV prefix '{{ openbao_garrison_kv_path }}/' purged (all versions + metadata)"
+      rescue:
+        - name: Warn if KV purge hit an error
+          debug:
+            msg: "Note: OpenBao KV purge under '{{ openbao_garrison_kv_path }}/' reported an issue (may already be empty)"
 
   post_tasks:
     - name: Summary

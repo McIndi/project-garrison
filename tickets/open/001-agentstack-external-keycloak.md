@@ -163,7 +163,7 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       same-VM run model, the two-loop dev workflow, all-secrets-via-OpenBao, the
       no-Bitnami Postgres decision, and key decisions — so handoffs stay lean
       (agents auto-read it). Drafted 2026-06-20, pending your review.
-- [ ] `teardown.yml` playbook (garrison's analog of armory's
+- [X] `teardown.yml` playbook (garrison's analog of armory's
       `teardown_k3s_workloads.yml`, gated by `-e teardown_confirm=true`): helm
       uninstall the release, delete the `agentstack` ns, `keycloak_realm:
       state=absent` for the `agentstack` realm, and clean garrison's OpenBao KV
@@ -417,5 +417,37 @@ _(running log — decisions, blockers, findings)_
   master-realm proof uses **`ansible.builtin.uri` + `ca_path`** (read-only
   `GET /realms/master`). `uri`+`ca_path` is therefore REQUIRED for in-cluster
   Keycloak calls, not merely a per-step fallback. Reqs §4.2/§4.3/§6 corrected.
+- 2026-06-22 — **F3 done: `teardown.yml` re-pointed at the contract + validated
+  live.** Garrison-only scope confirmed (no armory state touched). Fixes:
+    - **KV cleanup was wrong, now correct.** Old code did a single `DELETE` on
+      `secret/data/garrison` (soft-deletes one secret literally named `garrison`,
+      leaves versions/metadata). Replaced with `common/tasks/purge_openbao_kv_
+      prefix.yml`: LIST `secret/metadata/garrison/` → `DELETE
+      metadata/garrison/<key>` per entry (purges all versions). Flat layout
+      assumed; nested folders are surfaced via a non-fatal warning, not silently
+      skipped. Validated: seeded `test-a`/`test-b`, ran teardown, list returns 404.
+    - **`include_tasks` does NOT load a role's `defaults/`.** Teardown pulled the
+      vendored `common` helpers via `include_tasks`, so common-defaults-only vars
+      (`openbao_provisioner_policy_name`, `openbao_provisioner_token_ttl`,
+      `keycloak_bootstrap_admin_*`) were undefined at runtime. Switched the three
+      `prepare_*` includes to `include_role` + `tasks_from` (loads `common`
+      defaults; `group_vars` still overrides). This was the bulk of the "~13
+      undefined vars."
+    - **Admin-cred key mismatch.** `prepare_keycloak_bootstrap_admin.yml` keyed on
+      `admin-username`/`admin-password`; the real `keycloak-bootstrap-admin`
+      secret keys are `username`/`password` (verified). Corrected the defaults.
+    - **Jinja gotcha:** `_list.json.data.keys` resolved to the dict `.keys`
+      *method*, not the JSON `"keys"` field → `reject` failed. Fixed with
+      subscript `data['keys']`.
+    - Removed the dead `REQUESTS_CA_BUNDLE`/`SSL_CERT_FILE` env block on the realm
+      delete (open_url ignores it; `keycloak_realm` honours the real `ca_path:`).
+  **Latent issue flagged (not fixed here):** garrison has *duplicate, divergent*
+  provisioner-policy and admin-cred logic — `openbao_bootstrap` (inline,
+  `garrison_provisioner_policy_name`) vs vendored `common/prepare_openbao_
+  provisioner_token.yml` (`openbao_provisioner_policy_name`); and
+  `load_keycloak_admin_creds.yml` vs `prepare_keycloak_bootstrap_admin.yml`. Both
+  pairs create/read the SAME live names with different defaults/capsets, guarded
+  by create-if-absent → order-dependent. Works today because site.yml seeds the
+  policy first; should be consolidated.
 - Open input still needed before Phase 3: the concrete `<armory-domain>` /
   public Keycloak host string for the issuer URL + UI host.

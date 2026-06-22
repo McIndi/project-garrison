@@ -41,7 +41,9 @@ openbao_provisioner_token_ttl: 3600s
 # Keycloak bootstrap (for teardown realm deletion, optional seed user creation).
 keycloak_bootstrap_admin_secret_name: keycloak-bootstrap-admin
 keycloak_bootstrap_admin_secret_namespace: keycloak
-keycloak_bootstrap_admin_user_key: admin-username
-keycloak_bootstrap_admin_password_key: admin-password
+# Verified 2026-06-22 against the live secret: keys are username/password
+# (NOT admin-username/admin-password).
+keycloak_bootstrap_admin_user_key: username
+keycloak_bootstrap_admin_password_key: password
 keycloak_addr: https://keycloak-service.keycloak.svc.cluster.local:8443
 keycloak_tls_verify: true
