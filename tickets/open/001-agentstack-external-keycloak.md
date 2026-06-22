@@ -215,7 +215,7 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       above). `jboss-logging` in `eventsListeners`, 30-day `eventsExpiration`.
 
 ### Phase 2 — Secrets + trust `agentstack_secrets` (~½ day)
-- [ ] **Secret inventory & default-hardening (discovery — do this FIRST).**
+- [X] **Secret inventory & default-hardening (discovery — do this FIRST).**
       Enumerate **every** secret the chart consumes or auto-generates from
       `values.yaml` + subchart defaults: OIDC client secrets, `encryptionKey`,
       `auth.nextauthSecret`, Postgres (`postgresPassword`/`password`, default
@@ -230,24 +230,24 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       subchart is disabled (see `agentstack_db` decision); the DB password is the
       self-rolled StatefulSet's OpenBao/VSO secret, surfaced to the chart via
       `externalDatabase.existingSecret`.
-- [ ] Generate-if-absent the two client secrets (never re-randomize on re-run),
+- [X] Generate-if-absent the two client secrets (never re-randomize on re-run),
       write to OpenBao KV; `VaultStaticSecret` + `Bundle` CRs applied with
       `kubernetes.core.k8s` (templated `definition`). Resulting k8s Secret in
       `agentstack` ns must carry keys **exactly** `uiClientSecret` /
       `serverClientSecret` (reqs §2, §7 confirmed).
-- [ ] Generate-if-absent and deliver every other inventoried secret per its
+- [X] Generate-if-absent and deliver every other inventoried secret per its
       classification: `existingSecret`-capable ones (Postgres, Redis, …) via VSO
       `VaultStaticSecret`; hookless ones (`encryptionKey`, `auth.nextauthSecret`)
       read from OpenBao and injected as Helm values at deploy time.
-- [ ] trust-manager `Bundle`s into `agentstack` ns: `pki-int` (admin API),
+- [X] trust-manager `Bundle`s into `agentstack` ns: `pki-int` (admin API),
       `pki-ext` (OIDC validation over public URL).
-- [ ] **AgentStack Postgres creds + TLS cert** (feeds `agentstack_db`):
+- [X] **AgentStack Postgres creds + TLS cert** (feeds `agentstack_db`):
       generate-if-absent DB user/password in OpenBao KV → VSO `VaultStaticSecret`
       → k8s Secret (keys the chart's `externalDatabase.existingSecret` expects);
       cert-manager `Certificate` from `openbao-pki-internal` (SAN = the DB service
       FQDN in `agentstack` ns) for `ssl=on`. Both copied from armory's keycloak
       role (`vaultstaticsecret.yaml.j2`, the `keycloak_pg_tls_*` Certificate).
-- [ ] `encryptionKey` specifically: generate-if-absent in OpenBao, **inject as a
+- [X] `encryptionKey` specifically: generate-if-absent in OpenBao, **inject as a
       Helm value at deploy time** (NOT a synced Secret — no `existingSecret` hook,
       fails silently when empty; reqs §4.5). `auth.nextauthSecret` is delivered
       the same way (OpenBao → Helm value), **not** left to chart auto-gen — so it
@@ -472,8 +472,6 @@ _(running log — decisions, blockers, findings)_
   pairs create/read the SAME live names with different defaults/capsets, guarded
   by create-if-absent → order-dependent. Works today because site.yml seeds the
   policy first; should be consolidated.
-- Open input still needed before Phase 3: the concrete `<armory-domain>` /
-  public Keycloak host string for the issuer URL + UI host.
 - 2026-06-22 — **Phase 2 STARTED (scaffolding complete).** Built the full
   `agentstack_secrets` role (Phase 2: Secrets + trust). Structure:
     - `defaults/main.yml` — 50+ parameterized vars for OpenBao paths, VSO resources,
@@ -522,4 +520,57 @@ _(running log — decisions, blockers, findings)_
     - [ ] Validate fact caching across playbook runs (ansible-inventory check)
     - [ ] Test teardown.yml cleanup of Phase 2 secrets from OpenBao KV
   **Next: VM validation of Phase 2 role (full playbook run).**
+- 2026-06-22 — **Phase 2 REVIEWED, REWORKED & VALIDATED (supersedes the STARTED
+  note above).** Review found the role substantially broken — design-level, not
+  param typos — concentrated in the VSO/trust/CA integration (the parts needing
+  armory's real topology, which Copilot couldn't probe). Each fix validated live
+  on the VM, one at a time, until the full `site.yml` ran `failed=0`. Fixes:
+    1. **Undefined `agentstack_vso_sa_name`** — a botched edit merged two
+       defaults lines into a comment; the VaultAuth template referenced the
+       now-undefined var. `garrison_vso_sa_name` (openbao_bootstrap default) is
+       also out of scope in this role → defined `agentstack_vso_sa_name:
+       agentstack-vso` as a literal (must match the k8s-auth binding).
+    2. **VaultConnection CA was wrong + wrong shape.** Referenced a nonexistent
+       `openbao-ca` secret in the agentstack ns. VSO needs the OpenBao *listener*
+       CA (CN=OpenBao-Internal-CA) there. Also `caCertSecretRef` is a STRING
+       (secret name), not an object. Fixed both.
+    3. **Trust bundles sourced from the wrong namespace.** trust-manager runs
+       `--trust-namespace=openbao` and reads ALL secret sources from `openbao`
+       only (source namespace is ignored). Copilot sourced `keycloak-internal-tls`
+       (keycloak ns) and `armory-tls` (claimed ingress-nginx; actually keycloak).
+       Repointed to openbao-ns sources: `openbao-ca` (→ VSO CA bundle
+       `agentstack-openbao-ca`) and `openbao-ui-tls` ca.crt = Armory Root CA (→
+       public CA bundle `agentstack-public-ca` for pod OIDC, Phase 3).
+    4. **OIDC secret data model was incoherent.** Two separate KV leaves each
+       under key `client_secret`, but the VaultStaticSecret pointed at the folder
+       and expected uiClientSecret/serverClientSecret in one Secret. Consolidated
+       to ONE KV leaf with both keys; VSS points at the leaf.
+    5. **Keycloak client update could wipe Phase 1 config** — PUT with a
+       `{secret}`-only body. Changed to GET-modify-PUT (full client rep + merged
+       secret), preserving redirectUris/flows/default-scopes.
+    6. **Dict-key templating** — Ansible does not template task-arg dict *keys*;
+       the OIDC KV write stored literal `{{ agentstack_ui_client_secret_key }}`
+       as the key. Built the `data` dict inside one Jinja expression so the
+       variables resolve as keys.
+    7. **No kubeconfig** — the role's `kubernetes.core.*` tasks passed no
+       `kubeconfig:` and none was in env → "Invalid kube-config". Added play-level
+       `environment: K8S_AUTH_KUBECONFIG` in site.yml (explicit per-task kubeconfig
+       still overrides).
+    8. **Flattened all Phase 2 KV keys** to `garrison/agentstack-*` (were
+       `garrison/agentstack/*`, a nested folder the flat F3 teardown purge would
+       orphan — same fix as Phase 1's seed-admin key). Reordered main.yml so the
+       namespace + VSO SA + OpenBao CA bundle exist before the VSO resources.
+  **Validated end state (live):** VaultConnection + VaultAuth HEALTHY/READY; both
+  VaultStaticSecrets SYNCED (agentstack-oidc-client-secrets {uiClientSecret,
+  serverClientSecret}; agentstack-postgres-credentials {username,password,
+  postgres}); Postgres TLS cert issued; trust bundles synced; KV flat. Full
+  `site.yml` → `failed=0`.
+  **Minor leftovers (non-blocking):** (a) `secret_inventory.yml`'s PRINTED table
+  still describes the old/wrong trust sourcing (keycloak-internal-tls,
+  armory-tls/ingress-nginx) — cosmetic but misleading; (b) VSO adds a `_raw`
+  full-JSON key to synced secrets (harmless; suppress with `excludeRaw: true` if
+  desired); (c) the two Keycloak client-secret PUTs are `changed_when: true` every
+  run (Keycloak hashes aren't diffable) — idempotent in value, noisy in `changed`.
+- Open input still needed before Phase 3: the concrete `<armory-domain>` /
+  public Keycloak host string for the issuer URL + UI host.
 
