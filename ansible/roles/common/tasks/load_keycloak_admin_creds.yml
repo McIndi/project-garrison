@@ -1,0 +1,25 @@
+---
+# Common task: load_keycloak_admin_creds.yml
+#
+# Reads Keycloak admin credentials from a Kubernetes secret.
+# This is a read-only helper for CA/HTTPS validation proof-of-concept.
+#
+# Sets facts: keycloak_admin_user, keycloak_admin_password
+
+- name: Fetch Keycloak admin credentials from Kubernetes secret
+  kubernetes.core.k8s_info:
+    kind: Secret
+    name: "{{ keycloak_admin_secret_name }}"
+    namespace: "{{ keycloak_admin_secret_namespace }}"
+    kubeconfig: "{{ garrison_kubeconfig_path }}"
+  register: keycloak_admin_secret
+  changed_when: false
+  no_log: "{{ not (garrison_log_nolog | default(false) | bool) }}"
+
+- name: Extract and decode Keycloak admin credentials
+  ansible.builtin.set_fact:
+    keycloak_admin_user: "{{ keycloak_admin_secret.resources[0].data.username | b64decode }}"
+    keycloak_admin_password: "{{ keycloak_admin_secret.resources[0].data.password | b64decode }}"
+  changed_when: false
+  no_log: "{{ not (garrison_log_nolog | default(false) | bool) }}"
+  when: keycloak_admin_secret.resources | length > 0

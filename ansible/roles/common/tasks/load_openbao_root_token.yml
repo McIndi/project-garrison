@@ -1,0 +1,36 @@
+---
+# Common task: load_openbao_root_token.yml
+#
+# Break-glass root token reader (vendored from armory's pattern).
+# Decrypts {{ openbao_init_keys_file }} using {{ openbao_vault_pass_file }}.
+# This is the ONLY garrison task that reads an armory artifact.
+#
+# Sets fact: openbao_root_token (never logged, in-memory only)
+# Requires: become:true (root) to read /opt/openbao/* files
+
+- name: Decrypt OpenBao root token (break-glass, root access required)
+  ansible.builtin.shell: |
+    ansible-vault decrypt --vault-password-file {{ openbao_vault_pass_file }} \
+      --output - {{ openbao_init_keys_file }}
+  register: openbao_init_keys_output
+  changed_when: false
+  no_log: true
+  become: true
+
+- name: Parse and extract root token
+  ansible.builtin.set_fact:
+    openbao_root_token: "{{ (openbao_init_keys_output.stdout | from_yaml).root_token }}"
+  changed_when: false
+  no_log: true
+
+- name: Assert root token was successfully loaded
+  ansible.builtin.assert:
+    that:
+      - openbao_root_token is defined
+      - openbao_root_token | length > 0
+    fail_msg: |
+      OpenBao root token not loaded. Check:
+        - {{ openbao_init_keys_file }} (encrypted Ansible Vault file from armory)
+        - {{ openbao_vault_pass_file }} (Vault password file from armory)
+        - Current user has root access (become:true works)
+  changed_when: false

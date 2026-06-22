@@ -212,8 +212,14 @@ Its SAN is `keycloak-service.keycloak.svc.cluster.local`.
 Any in-cluster call garrison makes to armory's Keycloak admin REST API (for
 example to provision the `agentstack` realm) must:
 - Target `https://keycloak-service.keycloak.svc.cluster.local:8443`
-- Present armory's **internal CA** (`GET /v1/pki-int/ca/pem` from OpenBao, or
-  read the `openbao-ca` secret from the `keycloak` namespace) for cert validation.
+- Present the **cert-manager root CA** that signs the `keycloak-internal-tls`
+  cert for validation. **This is `CN=Armory Root CA`, NOT the `openbao-ca`
+  secret** (verified 2026-06-22: `openbao-ca` is `CN=OpenBao-Internal-CA`, the
+  OpenBao *listener* CA, and does not validate Keycloak's `:8443` cert). There is
+  no dedicated CA secret; read it from the **`ca.crt` key on the
+  `keycloak-internal-tls` secret** (ns `keycloak`). (`GET /v1/pki-int/ca/pem`
+  from OpenBao is an equivalent source — the `pki-int` mount backs the
+  `openbao-pki-internal` ClusterIssuer.)
 
 OIDC discovery, token validation, and browser redirects must instead use the
 public issuer URL (`https://<armory-host>/realms/agentstack`) with hostAlias
@@ -223,23 +229,36 @@ The `prepare_internal_https_caller.yml` common task encapsulates this CA
 acquisition pattern. See [`headlamp/tasks/oidc_client.yml` lines 1–22](../ansible/roles/headlamp/tasks/oidc_client.yml)
 for a complete working example.
 
-### 4.3 TLS trust — two CA roots required
+### 4.3 TLS trust — three internal roots, two trust paths
 
-Garrison pods need to trust **two separate CA chains** from armory's OpenBao PKI:
+Corrected 2026-06-22 against the live VM. Armory has **three** internal CA roots
+in play; garrison touches all three across two distinct trust paths.
 
-| Use | CA | OpenBao endpoint | Secret |
-|---|---|---|---|
-| In-cluster Keycloak admin REST API calls | Internal Issuing CA (`pki-int`) | `GET /v1/pki-int/ca/pem` | `openbao-ca` in `openbao` ns |
-| OIDC discovery/token validation over public URL (browser + pod) | External Issuing CA (`pki-ext`) | `GET /v1/pki-ext/ca/pem` | CA embedded in `armory-tls` secret |
+**Provisioning trust path (Ansible, in-cluster):** garrison's `uri`/`k8s` tasks
+call two services that chain to two *different* roots, so the
+`prepare_internal_https_caller.yml` helper assembles a **combined bundle** (both
+roots concatenated) at `internal_ca_bundle_path`:
 
-In practice: for Ansible provisioning tasks calling the internal API, use the
-internal CA bundle. For AgentStack pods doing OIDC validation against the public
-issuer URL (via the hostAlias → nginx path), use the external CA mounted as
-`NODE_EXTRA_CA_CERTS` (or equivalent). The external CA signs the nginx ingress
-`armory-tls` certificate.
+| Service garrison calls | Serving cert chains to | Source secret (key) |
+|---|---|---|
+| OpenBao API (`:8200`) | `CN=OpenBao-Internal-CA` | `openbao-ca` / `openbao` (`ca.crt`) |
+| Keycloak (`:8443`) | `CN=Armory Root CA` (via cert-manager `openbao-pki-internal`) | `keycloak-internal-tls` / `keycloak` (`ca.crt`) |
 
-trust-manager `Bundle` CRDs can distribute either CA bundle to garrison namespaces
-without manual copying — the preferred approach at scale.
+⚠️ Earlier notes said the Keycloak CA was `openbao-ca` — **wrong**. `openbao-ca`
+is the OpenBao listener CA and fails to validate Keycloak (and vice-versa); the
+two roots are mutually exclusive.
+
+**Runtime trust path (AgentStack pods, public URL):** OIDC discovery/token
+validation against the public issuer (`https://<armory-host>/realms/agentstack`
+via the hostAlias → nginx path) uses the **external** issuing CA (`pki-ext`,
+embedded in the `armory-tls` secret), mounted as `NODE_EXTRA_CA_CERTS` or
+equivalent. This signs the nginx ingress cert and is separate from the two
+provisioning roots above.
+
+trust-manager `Bundle` CRDs can distribute any of these to garrison namespaces
+without manual copying — the preferred approach at scale. (Note: armory's only
+current `Bundle`, `openbao-ca-bundle`, ships just `OpenBao-Internal-CA`, so
+garrison fetches the Armory Root CA from the leaf secret's `ca.crt` for now.)
 
 ### 4.4 Proxy/trust flags
 
@@ -380,9 +399,13 @@ isolation boundary between garrison and armory workloads.
 - **hostAlias pattern**: [`headlamp/tasks/deploy.yml` lines 296–333](../ansible/roles/headlamp/tasks/deploy.yml)
   implements the ingress-IP hostAlias injection. Replicate for AgentStack pods.
 - **Internal HTTPS caller setup**: [`common/tasks/prepare_internal_https_caller.yml`](../ansible/roles/common/tasks/prepare_internal_https_caller.yml)
-  fetches the OpenBao internal CA and writes a trusted bundle to a temp path,
-  ready for `ca_path:` in `ansible.builtin.uri` calls. Use this for all
-  in-cluster Keycloak admin API calls.
+  fetches **both** internal roots (OpenBao listener CA + cert-manager Armory Root
+  CA) and writes a **combined** trusted bundle to a temp path, ready for
+  `ca_path:` in `ansible.builtin.uri` calls. Use this for all in-cluster Keycloak
+  admin API calls. **Use `ansible.builtin.uri` + `ca_path` — not the
+  `community.general.keycloak_*` modules — for any call that must validate the
+  internal CA: those modules expose no `ca_path` and `open_url` ignores
+  `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE` (→ `CERTIFICATE_VERIFY_FAILED`).**
 
 ## 7. Open items checklist
 
@@ -408,9 +431,14 @@ isolation boundary between garrison and armory workloads.
       - roles: realm roles `agentstack-admin` and `agentstack-developer` (§3.5).
       - seed admin: one user with `agentstack-admin` (§3.6).
 - [x] ~~Establish CA-trust delivery from armory to garrison pods (§4.3)~~  —
-      **RESOLVED**: internal CA (`pki-int`) for admin API calls; external CA
-      (`pki-ext`) for OIDC validation over public URL. trust-manager `Bundle`
-      CRDs are the preferred distribution mechanism.
+      **RESOLVED (corrected 2026-06-22)**: provisioning needs a *combined* bundle
+      of two roots — OpenBao listener CA (`openbao-ca`) for the OpenBao API +
+      cert-manager `Armory Root CA` (`ca.crt` on `keycloak-internal-tls`) for
+      Keycloak `:8443`; `openbao-ca` does **not** validate Keycloak. Runtime pod
+      OIDC over the public URL uses the external CA (`pki-ext`, `armory-tls`).
+      `prepare_internal_https_caller.yml` assembles the combined provisioning
+      bundle. trust-manager `Bundle` CRDs remain the preferred distribution
+      mechanism at scale.
 - [x] ~~Confirm `existingSecret` shape: keys `uiClientSecret` / `serverClientSecret`.~~
       — **RESOLVED** against 0.7.2: the chart defaults
       `uiClientSecretKey: "uiClientSecret"` and

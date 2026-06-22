@@ -1,0 +1,62 @@
+---
+# Common task: prepare_internal_https_caller.yml
+#
+# Assembles a COMBINED internal CA trust bundle so garrison can validate HTTPS
+# to both of armory's internal PKIs from a single bundle:
+#   1. OpenBao listener CA  (CN=OpenBao-Internal-CA)  -> validates OpenBao API
+#   2. cert-manager root CA (CN=Armory Root CA)       -> validates Keycloak etc.
+# armory exposes no dedicated CA secret for (2); it is carried as the ca.crt key
+# on a cert-manager leaf secret (keycloak-internal-tls). Both roots are written
+# into one PEM file; a TLS peer is trusted if its chain anchors to either.
+#
+# Sets fact: internal_ca_bundle_path (path to combined CA file on disk)
+
+- name: Fetch OpenBao listener CA from Kubernetes secret
+  kubernetes.core.k8s_info:
+    kind: Secret
+    name: "{{ openbao_ca_secret_name }}"
+    namespace: "{{ openbao_ca_secret_namespace }}"
+    kubeconfig: "{{ garrison_kubeconfig_path }}"
+  register: openbao_ca_secret
+  changed_when: false
+
+- name: Fetch cert-manager root CA from Kubernetes secret
+  kubernetes.core.k8s_info:
+    kind: Secret
+    name: "{{ cert_manager_ca_secret_name }}"
+    namespace: "{{ cert_manager_ca_secret_namespace }}"
+    kubeconfig: "{{ garrison_kubeconfig_path }}"
+  register: cert_manager_ca_secret
+  changed_when: false
+
+- name: Assert both internal CA secrets were found
+  ansible.builtin.assert:
+    that:
+      - openbao_ca_secret.resources | length > 0
+      - cert_manager_ca_secret.resources | length > 0
+    fail_msg: |
+      Could not read one or both internal CA secrets:
+        - {{ openbao_ca_secret_namespace }}/{{ openbao_ca_secret_name }} (OpenBao listener CA)
+        - {{ cert_manager_ca_secret_namespace }}/{{ cert_manager_ca_secret_name }} (cert-manager root CA)
+      Ensure armory site.yml has completed and these secrets exist.
+
+- name: Write combined internal CA trust bundle to disk
+  ansible.builtin.copy:
+    content: |
+      {{ openbao_ca_secret.resources[0].data[openbao_ca_cert_key] | b64decode | trim }}
+      {{ cert_manager_ca_secret.resources[0].data[cert_manager_ca_cert_key] | b64decode | trim }}
+    dest: "{{ internal_ca_bundle_path }}"
+    mode: '0644'
+  changed_when: false
+
+- name: Assert combined CA bundle exists
+  ansible.builtin.stat:
+    path: "{{ internal_ca_bundle_path }}"
+  register: ca_bundle_stat
+  changed_when: false
+
+- name: Fail if combined CA bundle missing
+  ansible.builtin.fail:
+    msg: |
+      Combined internal CA bundle not found at {{ internal_ca_bundle_path }}.
+  when: not ca_bundle_stat.stat.exists

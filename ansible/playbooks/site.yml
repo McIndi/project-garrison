@@ -8,7 +8,16 @@
         - always
         - preflight
 
+    - role: openbao_bootstrap
+      tags:
+        - always
+        - openbao
+        - bootstrap
+
+    - role: agentstack_keycloak
+      tags:
+        - agentstack_keycloak
+
     # Next phases will add deploy roles in this order:
-    # - agentstack_keycloak
     # - agentstack_secrets
     # - agentstack

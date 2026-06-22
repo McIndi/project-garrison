@@ -1,0 +1,184 @@
+---
+# OpenBao bootstrap tasks — garrison-scoped identity, policies, and VSO wiring.
+#
+# This role creates garrison's OWN OpenBao artifacts:
+#   1. Acquire internal CA bundle (for HTTPS validation to OpenBao)
+#   2. Load root token (one-time break-glass read from armory's encrypted init-keys)
+#   3. Write garrison-provisioner policy (read/write/delete on garrison KV prefix)
+#   4. Mint scoped provisioner token (short TTL, in-memory, ephemeral)
+#   5. VSO wiring scaffold (garrison-vso-read policy + k8s auth role)
+#   6. Root token in-memory only (never persisted)
+#
+# All tasks are idempotent. Root token destroyed at play end (scope-local fact).
+
+# Task 1: Get the CA bundle for OpenBao HTTPS validation
+- name: Prepare internal HTTPS caller (internal-CA bundle for OpenBao TLS)
+  ansible.builtin.include_tasks: ../../../roles/common/tasks/prepare_internal_https_caller.yml
+
+# Task 2: Load root token (break-glass, vendored from armory's pattern)
+# Note: become is set on the decrypt task inside the included file, not here —
+# `become` is not a valid attribute on a TaskInclude.
+- name: Load OpenBao root token (break-glass, root access required)
+  ansible.builtin.include_tasks: ../../../roles/common/tasks/load_openbao_root_token.yml
+
+# Task 3: Write garrison-provisioner policy (read/write/delete on garrison prefix)
+- name: Write garrison-provisioner policy to OpenBao
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/sys/policies/acl/{{ garrison_provisioner_policy_name }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+      X-Vault-Request: "true"
+    body_format: json
+    body:
+      policy: |
+        path "{{ openbao_kv_mount }}/data/{{ openbao_kv_prefix }}/*" {
+          capabilities = ["create", "read", "update", "delete"]
+        }
+        path "{{ openbao_kv_mount }}/metadata/{{ openbao_kv_prefix }}/*" {
+          capabilities = ["read", "delete", "list"]
+        }
+    validate_certs: "{{ openbao_tls_verify }}"
+    ca_path: "{{ internal_ca_bundle_path }}"
+    status_code: [200, 204]
+  environment:
+    REQUESTS_CA_BUNDLE: "{{ internal_ca_bundle_path }}"
+    SSL_CERT_FILE: "{{ internal_ca_bundle_path }}"
+  no_log: true
+  changed_when: false
+
+# Task 4: Mint scoped provisioner token (short TTL, in-memory, no parent)
+- name: Mint garrison provisioner token
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/auth/token/create"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+      X-Vault-Request: "true"
+    body_format: json
+    body:
+      policies:
+        - "{{ garrison_provisioner_policy_name }}"
+      period: "{{ garrison_provisioner_token_period }}"
+      no_parent: true
+      display_name: "garrison-provisioner"
+    validate_certs: "{{ openbao_tls_verify }}"
+    ca_path: "{{ internal_ca_bundle_path }}"
+    status_code: [200]
+  environment:
+    REQUESTS_CA_BUNDLE: "{{ internal_ca_bundle_path }}"
+    SSL_CERT_FILE: "{{ internal_ca_bundle_path }}"
+  register: garrison_provisioner_token_response
+  no_log: true
+  changed_when: false
+
+- name: Extract and set provisioner token fact
+  ansible.builtin.set_fact:
+    openbao_provisioner_token: "{{ garrison_provisioner_token_response.json.auth.client_token }}"
+  no_log: true
+  changed_when: false
+
+# Task 5a: Write garrison-vso-read policy (read-only on garrison KV prefix)
+- name: Write garrison-vso-read policy to OpenBao
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/sys/policies/acl/{{ garrison_vso_policy_name }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+      X-Vault-Request: "true"
+    body_format: json
+    body:
+      policy: |
+        path "{{ openbao_kv_mount }}/data/{{ openbao_kv_prefix }}/*" {
+          capabilities = ["read"]
+        }
+        path "{{ openbao_kv_mount }}/metadata/{{ openbao_kv_prefix }}/*" {
+          capabilities = ["read", "list"]
+        }
+    validate_certs: "{{ openbao_tls_verify }}"
+    ca_path: "{{ internal_ca_bundle_path }}"
+    status_code: [200, 204]
+  environment:
+    REQUESTS_CA_BUNDLE: "{{ internal_ca_bundle_path }}"
+    SSL_CERT_FILE: "{{ internal_ca_bundle_path }}"
+  no_log: true
+  changed_when: false
+
+# Task 5b: Ensure Kubernetes auth method is enabled
+- name: Check if Kubernetes auth method is enabled
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/sys/auth/{{ openbao_k8s_auth_mount }}"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+      X-Vault-Request: "true"
+    validate_certs: "{{ openbao_tls_verify }}"
+    ca_path: "{{ internal_ca_bundle_path }}"
+    status_code: [200, 404]
+  environment:
+    REQUESTS_CA_BUNDLE: "{{ internal_ca_bundle_path }}"
+    SSL_CERT_FILE: "{{ internal_ca_bundle_path }}"
+  register: k8s_auth_status
+  no_log: true
+  changed_when: false
+
+- name: Enable Kubernetes auth method (if not present)
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/sys/auth/{{ openbao_k8s_auth_mount }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+      X-Vault-Request: "true"
+    body_format: json
+    body:
+      type: kubernetes
+      description: "Kubernetes auth for garrison VSO consumer"
+    validate_certs: "{{ openbao_tls_verify }}"
+    ca_path: "{{ internal_ca_bundle_path }}"
+    status_code: [200, 204]
+  environment:
+    REQUESTS_CA_BUNDLE: "{{ internal_ca_bundle_path }}"
+    SSL_CERT_FILE: "{{ internal_ca_bundle_path }}"
+  when: k8s_auth_status.status == 404
+  no_log: true
+  changed_when: false
+
+# Task 5c: Configure Kubernetes auth role for VSO consumer
+- name: Configure garrison Kubernetes auth role for VSO
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/auth/{{ openbao_k8s_auth_mount }}/role/{{ garrison_vso_k8s_role }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+      X-Vault-Request: "true"
+    body_format: json
+    body:
+      bound_service_account_names:
+        - "{{ garrison_vso_sa_name }}"
+      bound_service_account_namespaces:
+        - "{{ agentstack_namespace }}"
+      policies:
+        - "{{ garrison_vso_policy_name }}"
+      ttl: "24h"
+    validate_certs: "{{ openbao_tls_verify }}"
+    ca_path: "{{ internal_ca_bundle_path }}"
+    status_code: [200, 204]
+  environment:
+    REQUESTS_CA_BUNDLE: "{{ internal_ca_bundle_path }}"
+    SSL_CERT_FILE: "{{ internal_ca_bundle_path }}"
+  no_log: true
+  changed_when: false
+
+# Task 6: Root token lifecycle — dropped (in-memory only, destroyed at play end)
+- name: Debug — OpenBao bootstrap complete
+  ansible.builtin.debug:
+    msg: |
+      ✓ OpenBao bootstrap complete (Foundation chunk 2)
+      Garrison artifacts created:
+        - {{ garrison_provisioner_policy_name }} policy (read/write/delete on garrison KV prefix)
+        - garrison provisioner token (minted, in-memory, TTL={{ garrison_provisioner_token_period }})
+        - {{ garrison_vso_policy_name }} policy (read on garrison KV prefix)
+        - {{ garrison_vso_k8s_role }} Kubernetes auth role (VSO scaffold)
+      Root token: read, used, destroyed (never persisted; in-memory only)
+  changed_when: false
+

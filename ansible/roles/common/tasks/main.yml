@@ -1,0 +1,4 @@
+---
+# Common role — vendored garrison patterns.
+# This is a library role; tasks are included, not auto-invoked.
+# See README.md for details on each task.

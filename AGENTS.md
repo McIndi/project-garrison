@@ -31,16 +31,17 @@ OpenBao, the Keycloak operator, nginx-ingress, VSO, cert-manager, and trust-mana
   armory's on-disk location is not guaranteed (it is not nested under garrison).
   When you need an armory pattern (e.g. internal-CA acquisition, OpenBao token,
   the postgres StatefulSet), **vendor a copy into this repo** under
-  `ansible/roles/...` and parameterize it. Reuse armory's *patterns*, not its
-  *files in place*, and **never reuse armory's actual artifacts** (its root token,
-  provisioner token, policies, secrets) — garrison creates its own
+  `ansible/roles/common/tasks/` and parameterize it. Reuse armory's *patterns*,
+  not its *files in place*, and **never reuse armory's actual artifacts** (its root
+  token, provisioner token, policies, secrets) — garrison creates its own
   garrison-named/scoped equivalents.
   - **Sole documented exception (break-glass bootstrap):** the one-time OpenBao
     bootstrap reads armory's **root token** from the VM's Vault-encrypted
     `/opt/openbao/init-keys.yml` (decrypted with `/opt/openbao/.vault-pass`),
-    `no_log`, as root. It is used **once** to mint garrison's own scoped
-    provisioner identity + policies + k8s-auth roles, then never persisted. This is
-    the only place garrison touches an armory artifact; everything it *creates* is
+    `no_log`, as root (handled by `common/tasks/prepare_openbao_provisioner_token.yml`).
+    It is used **once** to mint garrison's own scoped provisioner identity +
+    policies + k8s-auth roles, then never persisted. This is the only place
+    garrison touches an armory artifact; everything it *creates* is
     garrison-owned. Paths come from vars (defaulting to the two above).
 - **All filesystem paths derive from `.env` vars** — never hardcode repo
   locations. Roots (`GARRISON_PROJECT_ROOT`, `GARRISON_ANSIBLE_ROOT`, and armory's

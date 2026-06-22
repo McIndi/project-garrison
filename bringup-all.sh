@@ -159,7 +159,6 @@ print_success "All required env vars set"
 # Check paths exist
 if [[ ! -d "$ARMORY_PROJECT_ROOT" ]]; then
   print_error "ARMORY_PROJECT_ROOT not found: $ARMORY_PROJECT_ROOT"
-  print_warning "Expected to run inside armory's VM with repos at /vagrant"
   exit 1
 fi
 
@@ -190,8 +189,10 @@ for target in "${TARGETS[@]}"; do
 
   if [[ "$target" == "armory" ]]; then
     ansible_root="$ARMORY_PROJECT_ROOT/ansible"
+    env_file="$ARMORY_PROJECT_ROOT/.env"
   else
     ansible_root="$GARRISON_ANSIBLE_ROOT"
+    env_file="$SCRIPT_DIR/.env"
   fi
 
   if [[ ! -f "$ansible_root/playbooks/site.yml" ]]; then
@@ -199,7 +200,12 @@ for target in "${TARGETS[@]}"; do
     exit 1
   fi
 
-  cmd="cd '$ansible_root' && set -a; source $SCRIPT_DIR/.env; set +a && ansible-playbook playbooks/site.yml"
+  if [[ ! -f "$env_file" ]]; then
+    print_error "$target env file not found: $env_file"
+    exit 1
+  fi
+
+  cmd="cd '$ansible_root' && set -a; source '$env_file'; set +a && ansible-playbook playbooks/site.yml"
 
   if [[ "$DRY_RUN" == "true" ]]; then
     echo "  $ $cmd"

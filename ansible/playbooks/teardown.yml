@@ -21,7 +21,8 @@
     # Hardcoded garrison defaults; override via -e if needed.
     agentstack_namespace: agentstack
     agentstack_realm: agentstack
-    openbao_garrison_kv_path: secret/data/garrison
+    # OpenBao KV path for garrison secrets (derived from common defaults).
+    openbao_garrison_kv_path: "{{ openbao_kv_mount }}/data/{{ openbao_kv_prefix }}"
 
   pre_tasks:
     - name: Safety gate — require explicit confirmation
@@ -51,11 +52,14 @@
             msg: Teardown cancelled (safety gate). Use -e teardown_confirm=true to override.
 
   tasks:
-    - name: Load common tasks (internal-CA, admin token)
-      import_tasks: ../../project-armory/ansible/roles/common/tasks/prepare_internal_https_caller.yml
+    - name: Prepare internal HTTPS caller (internal-CA bundle for TLS validation)
+      ansible.builtin.include_tasks: ../roles/common/tasks/prepare_internal_https_caller.yml
 
-    - name: Load OpenBao token for admin access
-      import_tasks: ../../project-armory/ansible/roles/common/tasks/load_openbao_token_for_admin_client.yml
+    - name: Prepare OpenBao provisioner token (read root, mint scoped token for KV cleanup)
+      ansible.builtin.include_tasks: ../roles/common/tasks/prepare_openbao_provisioner_token.yml
+
+    - name: Prepare Keycloak bootstrap admin credentials (for realm deletion)
+      ansible.builtin.include_tasks: ../roles/common/tasks/prepare_keycloak_bootstrap_admin.yml
 
     - name: Delete Helm release
       block:
@@ -100,18 +104,19 @@
         - name: Delete agentstack realm from Keycloak
           community.general.keycloak_realm:
             auth_client_id: admin-cli
-            auth_keycloak_url: "https://keycloak-service.keycloak.svc.cluster.local:8443"
+            auth_keycloak_url: "{{ keycloak_addr }}"
             auth_realm: master
-            auth_username: "{{ lookup('env', 'KEYCLOAK_ADMIN_USER') }}"
-            auth_password: "{{ lookup('env', 'KEYCLOAK_ADMIN_PASSWORD') }}"
+            auth_username: "{{ keycloak_admin_user }}"
+            auth_password: "{{ keycloak_admin_password }}"
             realm: "{{ agentstack_realm }}"
             state: absent
-            validate_certs: true
+            validate_certs: "{{ keycloak_tls_verify }}"
             ca_path: "{{ internal_ca_bundle_path }}"
           environment:
             # Fallback for ca_path if the module version doesn't support the ca_path param
             REQUESTS_CA_BUNDLE: "{{ internal_ca_bundle_path }}"
             SSL_CERT_FILE: "{{ internal_ca_bundle_path }}"
+          no_log: true
 
         - name: Debug — Keycloak realm deleted
           debug:
@@ -128,15 +133,16 @@
             url: "{{ openbao_addr }}/v1/{{ openbao_garrison_kv_path }}"
             method: DELETE
             headers:
-              X-Vault-Token: "{{ openbao_admin_token }}"
+              X-Vault-Token: "{{ openbao_provisioner_token }}"
               X-Vault-Request: "true"
             status_code:
               - 204  # Success (no content)
               - 404  # Not found (already deleted)
-            validate_certs: true
+            validate_certs: "{{ openbao_tls_verify }}"
             ca_path: "{{ internal_ca_bundle_path }}"
           register: openbao_delete_result
           changed_when: openbao_delete_result.status == 204
+          no_log: true
 
         - name: Debug — OpenBao KV cleaned
           debug:

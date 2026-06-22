@@ -1,0 +1,47 @@
+---
+# Garrison common defaults — internal-CA, OpenBao, Keycloak bootstrap patterns.
+# These are vendored adaptations of armory's patterns, parameterized for garrison.
+
+# Kubernetes kubeconfig path (must be set by playbook or group_vars).
+garrison_kubeconfig_path: "{{ lookup('ansible.builtin.env', 'GARRISON_KUBECONFIG_PATH') | default('/etc/rancher/k3s/k3s.yaml', true) }}"
+# Control flag for disabling no_log redaction in sensitive tasks.
+# When true, sensitive information will be printed to the console and logs for deep troubleshooting.
+# Default should remain false to protect secrets.
+garrison_log_nolog: "{{ lookup('ansible.builtin.env', 'GARRISON_LOG_NOLOG') | default('false', true) | bool }}"
+# Combined internal CA trust bundle, assembled from two armory PKIs (see
+# group_vars for the authoritative values and rationale):
+#   - OpenBao listener CA   (validates the OpenBao API)
+#   - cert-manager root CA  (validates Keycloak / cert-manager-issued services)
+internal_ca_bundle_path: /tmp/internal-ca-bundle.crt
+
+openbao_ca_secret_name: openbao-ca
+openbao_ca_secret_namespace: openbao
+openbao_ca_cert_key: ca.crt
+
+cert_manager_ca_secret_name: keycloak-internal-tls
+cert_manager_ca_secret_namespace: keycloak
+cert_manager_ca_cert_key: ca.crt
+
+# OpenBao bootstrap paths (break-glass root read — garrison's sole touch of armory artifact).
+openbao_init_keys_file: /opt/openbao/init-keys.yml
+openbao_vault_pass_file: /opt/openbao/.vault-pass
+
+# OpenBao service endpoint (cluster-local HTTPS).
+openbao_addr: https://openbao.openbao.svc.cluster.local:8200
+openbao_tls_verify: true
+
+# Garrison's OpenBao KV mount and prefix.
+openbao_kv_mount: secret
+openbao_kv_prefix: garrison
+
+# Garrison provisioner — scoped identity for KV writes + teardown cleanup.
+openbao_provisioner_policy_name: garrison-provisioner
+openbao_provisioner_token_ttl: 3600s
+
+# Keycloak bootstrap (for teardown realm deletion, optional seed user creation).
+keycloak_bootstrap_admin_secret_name: keycloak-bootstrap-admin
+keycloak_bootstrap_admin_secret_namespace: keycloak
+keycloak_bootstrap_admin_user_key: admin-username
+keycloak_bootstrap_admin_password_key: admin-password
+keycloak_addr: https://keycloak-service.keycloak.svc.cluster.local:8443
+keycloak_tls_verify: true

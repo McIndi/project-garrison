@@ -23,3 +23,44 @@ preflight_expected_deployments:
 preflight_fail_message: >-
   Armory platform dependencies are not fully ready. Run armory ansible/playbooks/site.yml first,
   then re-run garrison ansible/playbooks/site.yml.
+
+# OpenBao bootstrap — garrison-scoped provisioner identity, VSO wiring.
+# These paths derive from armory's OpenBao setup (break-glass root read only).
+openbao_init_keys_file: "{{ lookup('ansible.builtin.env', 'OPENBAO_INIT_KEYS_FILE') | default('/opt/openbao/init-keys.yml', true) }}"
+openbao_vault_pass_file: "{{ lookup('ansible.builtin.env', 'OPENBAO_VAULT_PASS_FILE') | default('/opt/openbao/.vault-pass', true) }}"
+
+# ===== GARRISON VARIABLE CONTRACT (Foundation chunk 1) =====
+# Internal CA acquisition. Garrison validates HTTPS to TWO separate armory
+# PKIs and assembles a COMBINED trust bundle at internal_ca_bundle_path:
+#   1. OpenBao listener CA (CN=OpenBao-Internal-CA) — validates the OpenBao API.
+#   2. cert-manager root (CN=Armory Root CA, via the openbao-pki-internal
+#      ClusterIssuer) — validates Keycloak and other cert-manager-issued
+#      services. No dedicated CA secret exists; it is carried as the ca.crt
+#      key on a cert-manager leaf secret (keycloak-internal-tls).
+# Each source is a (secret, namespace, key) tuple; the helper concatenates them.
+openbao_ca_secret_name: openbao-ca
+openbao_ca_secret_namespace: openbao
+openbao_ca_cert_key: ca.crt
+
+cert_manager_ca_secret_name: keycloak-internal-tls
+cert_manager_ca_secret_namespace: keycloak
+cert_manager_ca_cert_key: ca.crt
+
+# Combined trust bundle written to disk (trusts both internal roots).
+internal_ca_bundle_path: /tmp/garrison-internal-ca.crt
+
+# Service endpoints (HTTPS with internal CA validation)
+keycloak_addr: https://keycloak-service.keycloak.svc.cluster.local:8443
+openbao_addr: https://openbao.openbao.svc.cluster.local:8200
+
+# TLS validation flags
+keycloak_tls_verify: true
+openbao_tls_verify: true
+
+# OpenBao KV mount and prefix for garrison secrets
+openbao_kv_mount: secret
+openbao_kv_prefix: garrison
+
+# Keycloak admin bootstrap secret
+keycloak_admin_secret_name: keycloak-bootstrap-admin
+keycloak_admin_secret_namespace: keycloak

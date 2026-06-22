@@ -1,0 +1,23 @@
+---
+# OpenBao bootstrap role — garrison-scoped identity & VSO wiring.
+#
+# These defaults define garrison's OpenBao artifacts. All paths and identities
+# are garrison-specific; the role uses the break-glass root token (one-time read)
+# to bootstrap scoped provisioner policy, token, and Kubernetes auth role.
+#
+# Override via inventory or -e to adjust for different environments.
+# NOTE: openbao_addr, openbao_tls_verify, internal_ca_bundle_path, openbao_kv_mount,
+# openbao_kv_prefix, openbao_init_keys_file, openbao_vault_pass_file are defined
+# in group_vars/all.yml (Foundation chunk 1).
+
+# Garrison's scoped OpenBao provisioner policy & token (KV read/write/delete on garrison prefix).
+garrison_provisioner_policy_name: garrison-provisioner
+garrison_provisioner_token_period: 60m  # Re-minted per run; ephemeral is fine.
+
+# Garrison's VSO consumer policy & Kubernetes auth role.
+garrison_vso_policy_name: garrison-vso-read
+garrison_vso_sa_name: agentstack-vso
+garrison_vso_k8s_role: garrison
+
+# OpenBao Kubernetes auth method mount point.
+openbao_k8s_auth_mount: kubernetes

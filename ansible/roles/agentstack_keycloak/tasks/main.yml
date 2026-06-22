@@ -1,0 +1,37 @@
+---
+# agentstack_keycloak/tasks/main.yml
+#
+# CA/HTTPS validation proof-of-concept role for garrison.
+# This role demonstrates successful HTTPS communication to armory's Keycloak
+# with internal CA validation (pki-int) before any real secret provisioning.
+#
+# Flow:
+#   1. Acquire internal CA bundle (prepare_internal_https_caller)
+#   2. Load Keycloak admin credentials (load_keycloak_admin_creds)
+#   3. Perform a read-only Keycloak realm query (proof of HTTPS + CA validation)
+#
+# This is Foundation chunk 1 (variable contract + read-only helpers + CA/module proof).
+# Chunks 2-3 (realm provisioner, secret writes, bootstrap finalization) are out of scope.
+
+- name: Acquire internal CA bundle for HTTPS validation
+  ansible.builtin.include_tasks:
+    file: ../../../roles/common/tasks/prepare_internal_https_caller.yml
+
+- name: Load Keycloak admin bootstrap credentials
+  ansible.builtin.include_tasks:
+    file: ../../../roles/common/tasks/load_keycloak_admin_creds.yml
+
+# Read-only proof: GET the PUBLIC realm endpoint (/realms/master) over HTTPS.
+# Uses ansible.builtin.uri (not keycloak_realm_info) because only uri exposes
+# ca_path — open_url ignores SSL_CERT_FILE, so the env-var approach cannot
+# validate against armory's internal CA. A 200 here proves HTTPS reachability +
+# internal-CA validation via the combined bundle. Never mutates.
+- name: Verify Keycloak HTTPS connectivity with CA validation (read MASTER realm)
+  ansible.builtin.uri:
+    url: "{{ keycloak_addr }}/realms/master"
+    method: GET
+    validate_certs: "{{ keycloak_tls_verify }}"
+    ca_path: "{{ internal_ca_bundle_path }}"
+    status_code: [200]
+  changed_when: false
+  register: keycloak_master_realm_check

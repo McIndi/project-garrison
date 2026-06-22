@@ -169,7 +169,7 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       state=absent` for the `agentstack` realm, and clean garrison's OpenBao KV
       paths. This is what makes the inner loop `teardown.yml` → `site.yml` without
       touching armory.
-- [ ] `bringup-all` convenience wrapper (script or Make target) documenting the
+- [X] `bringup-all` convenience wrapper (script or Make target) documenting the
       forced outer-loop order: armory `site.yml` → garrison `site.yml` (since an
       armory rebuild wipes garrison's realm + KV state).
 - [X] Green `ansible-playbook --syntax-check` + `ansible-lint` before any logic.
@@ -334,6 +334,13 @@ _(running log — decisions, blockers, findings)_
   top. Guard added to AGENTS.md: never path-reference armory's repo — vendor
   copies. Also note: `.env.example` assumes `/vagrant/project-*` but the VM has
   garrison at `/opt/garrison/project-garrison` — verify/repair the env paths.
+- 2026-06-21 — **Vendor refactor COMPLETE.** Removed all armory imports from
+  garrison. Created garrison-local `common` role with three vendored tasks:
+  `prepare_internal_https_caller.yml`, `prepare_openbao_provisioner_token.yml`,
+  `prepare_keycloak_bootstrap_admin.yml`. Both `site.yml` (via openbao_bootstrap)
+  and `teardown.yml` now use garrison-local includes. Break-glass root token read
+  is sole documented exception (noted in code + AGENTS.md). No cross-repo imports
+  remaining. See VENDOR_REFACTOR.md for details.
 - 2026-06-20 — **Phase 0 validated in VM.** `site.yml` (preflight only) ran green
   on a VM pre-provisioned with armory → syntax-check implicitly passes and the
   preflight readiness logic works against real armory resources. Phase 0 done for
@@ -385,5 +392,30 @@ _(running log — decisions, blockers, findings)_
       missing deployments from present-but-not-ready deployments and fails readiness
       if a Deployment is scaled to 0, has `availableReplicas < spec.replicas`, or
       lacks an `Available=True` condition.
+- 2026-06-22 — **F1 module→CA proof spike: armory PKI is NOT what the spec
+  assumed (FINDING + DECISION).** Running the CA/HTTPS proof against the live VM
+  showed armory now uses **two mutually-exclusive internal roots**, and the spec's
+  "internal CA = `openbao-ca`" was wrong for Keycloak:
+    - OpenBao API (`:8200`) is served by **`CN=OpenBao-Internal-CA`** (secret
+      `openbao-ca`, ns `openbao`). Validates OpenBao only.
+    - Keycloak (`:8443`) is served by **`CN=Armory Root CA`** → `CN=Armory
+      Internal Issuing CA` (cert-manager `openbao-pki-internal` ClusterIssuer).
+      `openbao-ca` does NOT validate it. The Armory Root CA has no dedicated CA
+      secret; it is carried as the **`ca.crt` key on the `keycloak-internal-tls`
+      secret** (ns `keycloak`). Verified by curl: each root gives HTTP 200 for its
+      own service and fails (000) for the other.
+  **DECISION (combined trust bundle):** `prepare_internal_https_caller.yml` now
+  fetches BOTH CA secrets and concatenates them into one `internal_ca_bundle_path`
+  (trusts either root). New var contract: `openbao_ca_{secret_name,namespace,
+  cert_key}` + `cert_manager_ca_{secret_name,namespace,cert_key}` (Armory Root CA
+  defaults to `keycloak-internal-tls`/`keycloak`/`ca.crt`, configurable). Verified
+  the combined bundle validates both endpoints (200/200).
+  **DEVIATION from module-first (resolves the 2026-06-18 Phase-1 caveat):** the
+  keycloak modules do NOT accept the internal CA over 8443 —
+  `community.general.keycloak_realm_info` has no `ca_path`, and `open_url` ignores
+  `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE` (→ `CERTIFICATE_VERIFY_FAILED`). So the
+  master-realm proof uses **`ansible.builtin.uri` + `ca_path`** (read-only
+  `GET /realms/master`). `uri`+`ca_path` is therefore REQUIRED for in-cluster
+  Keycloak calls, not merely a per-step fallback. Reqs §4.2/§4.3/§6 corrected.
 - Open input still needed before Phase 3: the concrete `<armory-domain>` /
   public Keycloak host string for the issuer URL + UI host.

@@ -1,0 +1,39 @@
+---
+# Common task: prepare_keycloak_bootstrap_admin.yml
+#
+# Reads Keycloak bootstrap admin credentials from a k8s Secret (created by armory).
+# Used for teardown realm deletion and optional seed user creation.
+#
+# Prerequisites:
+#   - internal_ca_bundle_path prepared (from prepare_internal_https_caller)
+#   - Keycloak bootstrap secret exists in keycloak namespace
+#
+# Sets facts:
+#   - keycloak_admin_user
+#   - keycloak_admin_password
+
+- name: Fetch Keycloak bootstrap admin credentials from secret
+  kubernetes.core.k8s_info:
+    kind: Secret
+    name: "{{ keycloak_bootstrap_admin_secret_name }}"
+    namespace: "{{ keycloak_bootstrap_admin_secret_namespace }}"
+    kubeconfig: "{{ garrison_kubeconfig_path }}"
+  register: keycloak_admin_secret
+  changed_when: false
+
+- name: Fail if bootstrap secret not found
+  ansible.builtin.fail:
+    msg: |
+      Keycloak bootstrap admin secret not found:
+        Name: {{ keycloak_bootstrap_admin_secret_name }}
+        Namespace: {{ keycloak_bootstrap_admin_secret_namespace }}
+      This secret should be created by armory's Keycloak setup.
+      Ensure armory site.yml has completed.
+  when: keycloak_admin_secret.resources | length == 0
+
+- name: Set facts — Keycloak bootstrap admin credentials
+  ansible.builtin.set_fact:
+    keycloak_admin_user: "{{ keycloak_admin_secret.resources[0].data[keycloak_bootstrap_admin_user_key] | b64decode }}"
+    keycloak_admin_password: "{{ keycloak_admin_secret.resources[0].data[keycloak_bootstrap_admin_password_key] | b64decode }}"
+  no_log: true
+  changed_when: false

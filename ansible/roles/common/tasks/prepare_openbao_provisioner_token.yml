@@ -1,0 +1,128 @@
+---
+# Common task: prepare_openbao_provisioner_token.yml
+#
+# Garrison's OpenBao bootstrap: read root token (break-glass), mint scoped provisioner token.
+# This is garrison's sole permitted touch of an armory artifact (root token).
+#
+# Prerequisites: 
+#   - Runs as root (or with become: true)
+#   - internal_ca_bundle_path prepared (from prepare_internal_https_caller)
+#   - OpenBao files readable at openbao_init_keys_file + openbao_vault_pass_file
+#
+# Sets facts (no_log):
+#   - openbao_root_token
+#   - openbao_provisioner_token
+
+- name: Assert root token bootstrap files exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: bootstrap_file_stat
+  loop:
+    - "{{ openbao_init_keys_file }}"
+    - "{{ openbao_vault_pass_file }}"
+  changed_when: false
+
+- name: Fail if bootstrap files missing
+  ansible.builtin.fail:
+    msg: |
+      OpenBao bootstrap files not found:
+        init-keys: {{ openbao_init_keys_file }}
+        vault-pass: {{ openbao_vault_pass_file }}
+      These are created by armory's OpenBao setup (not garrison's responsibility).
+      Ensure armory site.yml has completed with OpenBao initialized.
+  when: bootstrap_file_stat.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+
+- name: Decrypt init-keys.yml to extract root token
+  ansible.builtin.shell:
+    cmd: |
+      ansible-vault decrypt \
+        --vault-password-file {{ openbao_vault_pass_file }} \
+        --output - {{ openbao_init_keys_file }} | \
+      python3 -c "import sys, yaml; data=yaml.safe_load(sys.stdin); print(data.get('root_token', ''))"
+  register: root_token_decrypt
+  changed_when: false
+  no_log: true
+  become: true
+
+- name: Set fact — root token (no_log, in-memory only)
+  ansible.builtin.set_fact:
+    openbao_root_token: "{{ root_token_decrypt.stdout | trim }}"
+  no_log: true
+
+- name: Assert root token is non-empty
+  ansible.builtin.assert:
+    that:
+      - openbao_root_token | length > 0
+    fail_msg: |
+      Failed to extract OpenBao root token from {{ openbao_init_keys_file }}.
+      Check that the file is encrypted with {{ openbao_vault_pass_file }}
+      and contains a 'root_token' key.
+
+- name: Create garrison-provisioner ACL policy (idempotent)
+  block:
+    - name: Read current garrison-provisioner policy
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/sys/policies/acl/{{ openbao_provisioner_policy_name }}"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ openbao_root_token }}"
+          X-Vault-Request: "true"
+        validate_certs: "{{ openbao_tls_verify }}"
+        ca_path: "{{ internal_ca_bundle_path }}"
+        status_code:
+          - 200
+          - 404
+      register: garrison_policy_current
+      changed_when: false
+      no_log: true
+
+    - name: Create garrison-provisioner policy (if absent)
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/sys/policies/acl/{{ openbao_provisioner_policy_name }}"
+        method: PUT
+        headers:
+          X-Vault-Token: "{{ openbao_root_token }}"
+          X-Vault-Request: "true"
+        body_format: json
+        body:
+          policy: |
+            # Garrison provisioner — scoped access to garrison KV paths only.
+            path "{{ openbao_kv_mount }}/data/{{ openbao_kv_prefix }}/*" {
+              capabilities = ["create", "read", "update", "delete", "list"]
+            }
+            path "{{ openbao_kv_mount }}/metadata/{{ openbao_kv_prefix }}/*" {
+              capabilities = ["create", "read", "update", "delete", "list"]
+            }
+        validate_certs: "{{ openbao_tls_verify }}"
+        ca_path: "{{ internal_ca_bundle_path }}"
+      register: garrison_policy_result
+      changed_when: garrison_policy_result.status == 204
+      when: garrison_policy_current.status == 404
+      no_log: true
+
+- name: Mint scoped provisioner token
+  block:
+    - name: Generate scoped token under garrison-provisioner policy
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/auth/token/create"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ openbao_root_token }}"
+          X-Vault-Request: "true"
+        body_format: json
+        body:
+          policies:
+            - "{{ openbao_provisioner_policy_name }}"
+          ttl: "{{ openbao_provisioner_token_ttl }}"
+          renewable: true
+        validate_certs: "{{ openbao_tls_verify }}"
+        ca_path: "{{ internal_ca_bundle_path }}"
+      register: garrison_token_response
+      changed_when: true
+      no_log: true
+
+    - name: Set fact — garrison provisioner token (no_log, in-memory only)
+      ansible.builtin.set_fact:
+        openbao_provisioner_token: "{{ garrison_token_response.json.auth.client_token }}"
+      no_log: true
+      changed_when: false
