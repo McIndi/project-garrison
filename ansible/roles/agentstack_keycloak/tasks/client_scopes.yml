@@ -1,0 +1,57 @@
+---
+# agentstack_keycloak/tasks/client_scopes.yml
+#
+# Provision the agentstack-server-audience client scope in the agentstack realm.
+#
+# The scope carries an oidc-audience-mapper that injects the literal client ID
+# `agentstack-server` into the `aud` claim of access tokens issued to agentstack-ui.
+# This is required for the agentstack server to accept tokens from the UI
+# (validates aud == agentstack-server).
+#
+# CRITICAL — literal client ID, NOT a URL (ticket §3.4 / §audience bug):
+#   The mapper uses `included.custom.audience: agentstack-server` (the client ID
+#   string), not any URL form. The chart's bundled Keycloak used a URL, which
+#   caused 401s because the server validates against the literal client ID.
+#   This audience scope is the fix.
+#
+# The scope is assigned to agentstack-ui as a DEFAULT scope in clients.yml
+# (via the `default_client_scopes` list on keycloak_client). Any token issued
+# for agentstack-ui will therefore always carry the audience claim — no per-user
+# scope consent required.
+#
+# Prerequisites:
+#   - Realm agentstack exists (realm.yml complete)
+#   - CA proof passed (system trust store contains internal CA)
+#   - keycloak_admin_user / keycloak_admin_password facts set
+
+- name: Create / update agentstack-server-audience client scope
+  community.general.keycloak_clientscope:
+    auth_keycloak_url: "{{ keycloak_addr }}"
+    auth_realm: "{{ keycloak_auth_realm }}"
+    auth_username: "{{ keycloak_admin_user }}"
+    auth_password: "{{ keycloak_admin_password }}"
+    validate_certs: "{{ keycloak_tls_verify }}"
+    realm: "{{ agentstack_keycloak_realm }}"
+    name: "{{ agentstack_audience_scope_name }}"
+    description: >-
+      Injects the agentstack-server client ID into the access token aud claim.
+      Required for the server to accept tokens issued to the UI client.
+    protocol: openid-connect
+    protocol_mappers:
+      - name: "{{ agentstack_audience_scope_name }}-mapper"
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        config:
+          # IMPORTANT: literal client ID string, NOT a URL. See ticket §3.4.
+          included.custom.audience: "{{ agentstack_server_client_id }}"
+          access.token.claim: "true"
+          id.token.claim: "false"
+    state: present
+  register: audience_scope_result
+  no_log: "{{ not (garrison_log_nolog | default(false) | bool) }}"
+
+- name: Report audience scope provisioning outcome
+  ansible.builtin.debug:
+    msg: >-
+      {{ agentstack_audience_scope_name }} scope
+      {{ 'created' if audience_scope_result.changed else 'already up-to-date' }}

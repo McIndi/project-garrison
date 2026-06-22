@@ -1,0 +1,79 @@
+---
+# agentstack_keycloak role defaults
+#
+# All values are intentionally parameterized. Override in group_vars for
+# environment-specific settings. The keycloak_addr, keycloak_tls_verify,
+# internal_ca_bundle_path, keycloak_admin_user, keycloak_admin_password,
+# openbao_addr, openbao_tls_verify, openbao_kv_mount, openbao_kv_prefix, and
+# openbao_provisioner_token are sourced from common defaults / group_vars and
+# from facts set by earlier roles (openbao_bootstrap, common tasks).
+
+# ── Realm ─────────────────────────────────────────────────────────────────────
+agentstack_keycloak_realm: agentstack
+agentstack_keycloak_realm_display_name: "Agent Stack"
+
+# ── Keycloak admin auth (auth_realm is always master for admin operations) ─────
+keycloak_auth_realm: master
+
+# ── Client IDs ────────────────────────────────────────────────────────────────
+agentstack_ui_client_id: agentstack-ui
+agentstack_server_client_id: agentstack-server
+
+# ── UI redirect URIs / web origins (derived from agentstack_ui_host in group_vars)
+# Use a wildcard under the host for development; tighten to specific callback
+# paths before production use.
+agentstack_ui_redirect_uris:
+  - "https://{{ agentstack_ui_host }}/*"
+
+agentstack_ui_web_origins:
+  - "https://{{ agentstack_ui_host }}"
+
+# ── UI client default scopes ───────────────────────────────────────────────────
+# This list is the FULL desired set of default scopes for agentstack-ui.
+# It includes the standard Keycloak scopes required for OIDC login + the custom
+# audience scope added in client_scopes.yml. Keep in sync if you add scopes.
+agentstack_ui_default_client_scopes:
+  - email
+  - profile
+  - roles
+  - web-origins
+  - "{{ agentstack_audience_scope_name }}"
+
+# ── Client scope (audience mapper) ─────────────────────────────────────────────
+agentstack_audience_scope_name: agentstack-server-audience
+
+# ── Realm roles ───────────────────────────────────────────────────────────────
+agentstack_realm_roles:
+  - agentstack-admin
+  - agentstack-developer
+
+# ── Seed admin user ────────────────────────────────────────────────────────────
+agentstack_seed_admin_username: agentstack-admin
+agentstack_seed_admin_email: "agentstack-admin@localhost"
+agentstack_seed_admin_first_name: "AgentStack"
+agentstack_seed_admin_last_name: "Admin"
+# The role assigned to the seed admin at the realm level.
+agentstack_seed_admin_role: agentstack-admin
+# OpenBao KV sub-path for the seed admin password (under openbao_kv_prefix).
+# Full path: {{ openbao_kv_mount }}/data/{{ openbao_kv_prefix }}/{{ agentstack_seed_admin_password_kv_subpath }}
+# MUST stay flat (no "/") — the teardown KV purge is flat-only and would orphan
+# a nested key. See ticket F3 / 2026-06-22.
+agentstack_seed_admin_password_kv_subpath: seed-admin-password
+
+# ── Audit events ───────────────────────────────────────────────────────────────
+# Garrison owns the agentstack realm and enables audit events; armory owns the
+# listener/retention pipe (DECISION 2026-06-20).
+agentstack_events_enabled: true
+agentstack_events_listeners:
+  - jboss-logging
+agentstack_admin_events_enabled: true
+agentstack_admin_events_details_enabled: true
+# 30 days in seconds. Adjust per retention policy.
+agentstack_events_expiration: 2592000
+
+# ── System trust store (Fedora/RHEL) ──────────────────────────────────────────
+# The ca_proof task installs the combined internal CA bundle into the system
+# trust store so community.general.keycloak_* modules (which use open_url and
+# do NOT respect REQUESTS_CA_BUNDLE) can validate the internal-CA HTTPS endpoint.
+agentstack_ca_trust_anchors_dir: /etc/pki/ca-trust/source/anchors
+agentstack_ca_trust_anchor_filename: garrison-internal-ca.crt

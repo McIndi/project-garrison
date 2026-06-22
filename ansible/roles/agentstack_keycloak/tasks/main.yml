@@ -1,37 +1,52 @@
 ---
-# agentstack_keycloak/tasks/main.yml
+# agentstack_keycloak/tasks/main.yml — Phase 1: realm provisioner
 #
-# CA/HTTPS validation proof-of-concept role for garrison.
-# This role demonstrates successful HTTPS communication to armory's Keycloak
-# with internal CA validation (pki-int) before any real secret provisioning.
+# Provisions the agentstack realm, OIDC clients, audience scope, realm roles,
+# and seed admin user against armory's external Keycloak.
 #
-# Flow:
-#   1. Acquire internal CA bundle (prepare_internal_https_caller)
-#   2. Load Keycloak admin credentials (load_keycloak_admin_creds)
-#   3. Perform a read-only Keycloak realm query (proof of HTTPS + CA validation)
+# Execution order (each step is a separate task file for clarity):
+#   1. prepare_internal_https_caller  — assemble combined CA bundle (common)
+#   2. load_keycloak_admin_creds      — read admin user/password from k8s Secret (common)
+#   3. ca_proof                       — install CA to system trust store; prove
+#                                       community.general.keycloak_* works with
+#                                       validate_certs: true (principle #3 caveat)
+#   4. realm                          — create/update the agentstack realm + audit events
+#   5. client_scopes                  — agentstack-server-audience scope + audience mapper
+#   6. clients                        — agentstack-ui and agentstack-server OIDC clients
+#   7. roles_and_users                — realm roles + seed admin user (pw from OpenBao)
 #
-# This is Foundation chunk 1 (variable contract + read-only helpers + CA/module proof).
-# Chunks 2-3 (realm provisioner, secret writes, bootstrap finalization) are out of scope.
+# All tasks are idempotent by construction (principle #2). Client secrets are NOT
+# set here — that is Phase 2 (agentstack_secrets). The openbao_provisioner_token
+# fact must be set before this role runs (by the openbao_bootstrap role in site.yml).
 
-- name: Acquire internal CA bundle for HTTPS validation
+# ── Prerequisites ─────────────────────────────────────────────────────────────
+
+- name: Assemble combined internal CA trust bundle
   ansible.builtin.include_tasks:
-    file: ../../../roles/common/tasks/prepare_internal_https_caller.yml
+    file: "{{ role_path }}/../common/tasks/prepare_internal_https_caller.yml"
 
-- name: Load Keycloak admin bootstrap credentials
+- name: Load Keycloak bootstrap admin credentials
   ansible.builtin.include_tasks:
-    file: ../../../roles/common/tasks/load_keycloak_admin_creds.yml
+    file: "{{ role_path }}/../common/tasks/load_keycloak_admin_creds.yml"
 
-# Read-only proof: GET the PUBLIC realm endpoint (/realms/master) over HTTPS.
-# Uses ansible.builtin.uri (not keycloak_realm_info) because only uri exposes
-# ca_path — open_url ignores SSL_CERT_FILE, so the env-var approach cannot
-# validate against armory's internal CA. A 200 here proves HTTPS reachability +
-# internal-CA validation via the combined bundle. Never mutates.
-- name: Verify Keycloak HTTPS connectivity with CA validation (read MASTER realm)
-  ansible.builtin.uri:
-    url: "{{ keycloak_addr }}/realms/master"
-    method: GET
-    validate_certs: "{{ keycloak_tls_verify }}"
-    ca_path: "{{ internal_ca_bundle_path }}"
-    status_code: [200]
-  changed_when: false
-  register: keycloak_master_realm_check
+# ── Phase 1 task files ────────────────────────────────────────────────────────
+
+- name: "Phase 1 — CA proof: install internal CA + verify keycloak module TLS"
+  ansible.builtin.include_tasks:
+    file: ca_proof.yml
+
+- name: "Phase 1 — Realm: create/update agentstack realm with audit events"
+  ansible.builtin.include_tasks:
+    file: realm.yml
+
+- name: "Phase 1 — Client scopes: agentstack-server-audience + audience mapper"
+  ansible.builtin.include_tasks:
+    file: client_scopes.yml
+
+- name: "Phase 1 — Clients: agentstack-ui and agentstack-server"
+  ansible.builtin.include_tasks:
+    file: clients.yml
+
+- name: "Phase 1 — Roles and users: realm roles + seed admin user"
+  ansible.builtin.include_tasks:
+    file: roles_and_users.yml

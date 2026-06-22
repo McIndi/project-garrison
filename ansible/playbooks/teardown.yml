@@ -24,6 +24,9 @@
     # OpenBao KV v2 metadata prefix for garrison secrets (derived from common
     # defaults). Purge happens via metadata/ to remove ALL versions, not data/.
     openbao_garrison_kv_path: "{{ openbao_kv_mount }}/metadata/{{ openbao_kv_prefix }}"
+    # System trust-store anchor installed by agentstack_keycloak/ca_proof.yml.
+    # Kept in sync with that role's agentstack_ca_trust_anchor_filename.
+    garrison_ca_trust_anchor_path: /etc/pki/ca-trust/source/anchors/garrison-internal-ca.crt
 
   pre_tasks:
     - name: Safety gate — require explicit confirmation
@@ -137,7 +140,7 @@
           debug:
             msg: "Note: Keycloak realm '{{ agentstack_realm }}' not found (may already be deleted)"
 
-    - name: Clean OpenBao KV paths (recursive metadata purge under garrison prefix)
+    - name: Clean OpenBao KV paths (metadata purge under garrison prefix)
       block:
         - name: Purge all garrison secrets (all versions) under the KV prefix
           ansible.builtin.include_tasks: ../roles/common/tasks/purge_openbao_kv_prefix.yml
@@ -152,6 +155,29 @@
           debug:
             msg: "Note: OpenBao KV purge under '{{ openbao_garrison_kv_path }}/' reported an issue (may already be empty)"
 
+    - name: Remove garrison CA from the system trust store
+      block:
+        - name: Remove garrison internal-CA trust anchor
+          ansible.builtin.file:
+            path: "{{ garrison_ca_trust_anchor_path }}"
+            state: absent
+          become: true
+          register: garrison_ca_anchor_removed
+
+        - name: Rebuild system CA trust store (only if the anchor was present)
+          ansible.builtin.command:
+            cmd: update-ca-trust extract
+          become: true
+          changed_when: false
+          when: garrison_ca_anchor_removed.changed
+
+        - name: Debug — system trust store cleaned
+          debug:
+            msg: >-
+              {{ 'Garrison CA anchor removed + trust store rebuilt'
+                 if garrison_ca_anchor_removed.changed
+                 else 'No garrison CA anchor present (nothing to remove)' }}
+
   post_tasks:
     - name: Summary
       debug:
@@ -162,4 +188,5 @@
             - agentstack namespace deleted
             - agentstack realm removed from Keycloak
             - OpenBao KV paths cleaned
+            - Garrison CA removed from system trust store
           Next: ansible-playbook playbooks/site.yml (to rebuild cleanly)

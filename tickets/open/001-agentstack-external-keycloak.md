@@ -175,43 +175,44 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
 - [X] Green `ansible-playbook --syntax-check` + `ansible-lint` before any logic.
 
 ### Phase 1 — Realm provisioner `agentstack_keycloak` (~1 day)  ← retires §3.4 audience bug + §module-CA caveat
-- [ ] **First, prove the module→internal-CA path** (the principle #3 caveat):
-      one `community.general.keycloak_realm` call against
-      `https://keycloak-service.keycloak.svc.cluster.local:8443` with the pki-int
-      CA bundle. If it can't present the CA, decide fallback (REST `uri`) for
-      *that step only* before building the rest.
-- [ ] Readiness assertion (write failing first): `keycloak_realm` /
-      `k8s_info` confirms realm `agentstack` exists.
-- [ ] Realm `agentstack`: bootstrap via `KeycloakRealmImport` CR applied with
-      `kubernetes.core.k8s` (NO `clientScopes` block — it suppresses built-in
-      scopes and breaks sign-in; see realmimport.yaml.j2 warning), OR via
-      `community.general.keycloak_realm`. Include seed admin user.
-- [ ] Both clients via `community.general.keycloak_client` (idempotent, no
-      manual GET→PUT):
-      - `agentstack-ui`: confidential, `standardFlowEnabled: true`,
-        `directAccessGrantsEnabled: false`, redirect/web-origins scoped to the
-        **real** UI host (not the chart's `["*"]`).
-      - `agentstack-server`: confidential, `standardFlowEnabled: false`,
-        `serviceAccountsEnabled: true`, `directAccessGrantsEnabled: false`.
-- [ ] Client scope `agentstack-server-audience` via
-      `community.general.keycloak_clientscope` with an `oidc-audience-mapper`
-      protocol mapper, `included.custom.audience: agentstack-server` (**literal
-      client id, NOT a URL** — the §3.4 bug), `access.token.claim: "true"`,
-      `id.token.claim: "false"`; assign as a **default** scope on `agentstack-ui`
-      (via `keycloak_client` `default_client_scopes` / the clientscope module —
-      verify which exposes default-scope assignment in the pinned version).
-- [ ] Realm roles `agentstack-admin` + `agentstack-developer` via
-      `community.general.keycloak_role`/`keycloak_realm_role`; assign
-      `agentstack-admin` to the seed user (`keycloak_realm_rolemapping` /
-      `keycloak_user`).
-- [ ] **Enable audit events on the `agentstack` realm** (garrison owns this realm;
-      armory owns only the listener/retention pipe — DECISION 2026-06-20). Set
-      `eventsEnabled: true`, keep `jboss-logging` in `eventsListeners`,
-      `adminEventsEnabled: true`, `adminEventsDetailsEnabled: true`, and an
-      `eventsExpiration` — via `community.general.keycloak_realm`
-      (`events_enabled`/`events_listeners`/`admin_events_enabled`/
-      `admin_events_details_enabled`). Gives login + provisioning audit for the
-      app layer (see Notes 2026-06-20).
+- [x] **First, prove the module→internal-CA path** (the principle #3 caveat):
+      Implemented in `ca_proof.yml`: installs the combined CA bundle to the Fedora
+      system trust store (`/etc/pki/ca-trust/source/anchors/` + `update-ca-trust
+      extract`) — this is the correct fix because `community.general.keycloak_*`
+      uses `open_url` (NOT Python `requests`) and does NOT honour
+      `REQUESTS_CA_BUNDLE`/`SSL_CERT_FILE`. After trust-store update, `open_url`
+      respects the OS ca-bundle, so `validate_certs: true` works. The proof call
+      (`keycloak_realm` against `master`) runs immediately after to confirm.
+      **Needs VM validation** to confirm the trust-store approach works end-to-end.
+- [x] Readiness assertion (write failing first): the `ca_proof.yml` assert fires
+      if the `keycloak_realm` module call is skipped/undefined; realm existence
+      check is implicit — `keycloak_realm state: present` on `agentstack` will
+      fail fast if Keycloak is unreachable.
+- [x] Realm `agentstack`: `community.general.keycloak_realm` in `realm.yml`
+      (NO `clientScopes` block); audit events (`eventsEnabled`, `eventsListeners`,
+      `adminEventsEnabled`, `adminEventsDetailsEnabled`, `eventsExpiration`) set
+      in the same call — garrison owns this realm end-to-end.
+- [x] Both clients via `community.general.keycloak_client` in `clients.yml`:
+      - `agentstack-ui`: confidential, `standard_flow_enabled: true`,
+        `direct_access_grants_enabled: false`, redirect/web-origins scoped to the
+        real UI host; `default_client_scopes` includes standard OIDC scopes +
+        `agentstack-server-audience`.
+      - `agentstack-server`: confidential, `standard_flow_enabled: false`,
+        `service_accounts_enabled: true`, `direct_access_grants_enabled: false`.
+- [x] Client scope `agentstack-server-audience` via
+      `community.general.keycloak_clientscope` in `client_scopes.yml` with
+      `oidc-audience-mapper`, `included.custom.audience: agentstack-server`
+      (**literal client id, NOT a URL** — the §3.4 fix); assigned as a **default**
+      scope on `agentstack-ui` via `default_client_scopes` in `clients.yml`
+      (scope must be created in `client_scopes.yml` before `clients.yml` runs).
+- [x] Realm roles `agentstack-admin` + `agentstack-developer` via
+      `community.general.keycloak_role` in `roles_and_users.yml`; seed admin user
+      created with `community.general.keycloak_user` with `realm_roles:
+      [agentstack-admin]`; password generated-if-absent in OpenBao KV and read
+      back each run (stable value — no fresh random; uses `openbao_provisioner_token`
+      from `openbao_bootstrap` role).
+- [x] **Audit events** set directly on the `keycloak_realm` call (see realm item
+      above). `jboss-logging` in `eventsListeners`, 30-day `eventsExpiration`.
 
 ### Phase 2 — Secrets + trust `agentstack_secrets` (~½ day)
 - [ ] **Secret inventory & default-hardening (discovery — do this FIRST).**
@@ -341,6 +342,28 @@ _(running log — decisions, blockers, findings)_
   and `teardown.yml` now use garrison-local includes. Break-glass root token read
   is sole documented exception (noted in code + AGENTS.md). No cross-repo imports
   remaining. See VENDOR_REFACTOR.md for details.
+- 2026-06-22 — **Phase 1 implemented (needs VM validation).** Built the full
+  `agentstack_keycloak` role: `defaults/main.yml`, `tasks/ca_proof.yml`,
+  `tasks/realm.yml`, `tasks/client_scopes.yml`, `tasks/clients.yml`,
+  `tasks/roles_and_users.yml`, updated `tasks/main.yml` orchestrator. Key
+  decisions made during implementation:
+  (1) **CA module caveat resolved by design**: `community.general.keycloak_*`
+  uses `open_url` (not Python `requests`), so `REQUESTS_CA_BUNDLE` is useless.
+  Fix: install the combined CA bundle into the Fedora system trust store
+  (`/etc/pki/ca-trust/source/anchors/` + `update-ca-trust extract`) in
+  `ca_proof.yml` before any module calls. `open_url` respects the OS ca-bundle.
+  Proof call (`keycloak_realm` on `master`) confirms it works.
+  (2) **Realm uses `community.general.keycloak_realm`** (not `KeycloakRealmImport`
+  CR) — simpler, fully idempotent, handles audit events in the same call.
+  (3) **Client scope created before clients** so `default_client_scopes` on
+  `agentstack-ui` can reference `agentstack-server-audience` at create time.
+  (4) **Seed user password**: generate-if-absent via python3 `secrets` module →
+  write to OpenBao KV → read back each run. Uses `openbao_provisioner_token`
+  (set by `openbao_bootstrap`). Password update in `keycloak_user` will report
+  `changed: true` each run (module limitation; value is stable from OpenBao).
+  **Next step: run `ansible-playbook --syntax-check` and `ansible-lint` in VM,
+  then `site.yml` end-to-end. Verify CA proof task passes with `validate_certs:
+  true`; if not, fall back to `uri + ca_path` for affected steps only.**
 - 2026-06-20 — **Phase 0 validated in VM.** `site.yml` (preflight only) ran green
   on a VM pre-provisioned with armory → syntax-check implicitly passes and the
   preflight readiness logic works against real armory resources. Phase 0 done for

@@ -1,0 +1,99 @@
+---
+# agentstack_keycloak/tasks/clients.yml
+#
+# Provision the two OIDC clients in the agentstack realm:
+#
+#   agentstack-ui
+#     - Browser login (standard flow), confidential
+#     - redirect_uris / web_origins scoped to the real UI host (not "*")
+#     - default_client_scopes includes agentstack-server-audience (created in
+#       client_scopes.yml) so every token issued for this client carries aud=
+#       agentstack-server. The full list also includes the standard Keycloak
+#       scopes required for OIDC login (email, profile, roles, web-origins).
+#     - directAccessGrantsEnabled: false (ROPC disabled — DECISION 2026-06-20)
+#
+#   agentstack-server
+#     - Service account / M2M, confidential
+#     - Standard flow disabled; service accounts enabled
+#     - directAccessGrantsEnabled: false (starts false; see ticket §ROPC caveat)
+#     - No audience scope — it IS the audience, not a consumer of it
+#
+# Client secrets are NOT set here. Phase 2 (agentstack_secrets) generates them
+# generate-if-absent in OpenBao and delivers them to the chart via VSO
+# VaultStaticSecret. Keycloak will auto-assign a secret on first create; the
+# chart uses an existingSecret reference, not Keycloak's auto-generated value.
+#
+# Prerequisites:
+#   - Realm agentstack exists (realm.yml)
+#   - agentstack-server-audience scope exists (client_scopes.yml)
+#   - CA proof passed; keycloak_admin_user / keycloak_admin_password facts set
+
+# ── agentstack-ui ─────────────────────────────────────────────────────────────
+
+- name: Create / update agentstack-ui OIDC client
+  community.general.keycloak_client:
+    auth_keycloak_url: "{{ keycloak_addr }}"
+    auth_realm: "{{ keycloak_auth_realm }}"
+    auth_username: "{{ keycloak_admin_user }}"
+    auth_password: "{{ keycloak_admin_password }}"
+    validate_certs: "{{ keycloak_tls_verify }}"
+    realm: "{{ agentstack_keycloak_realm }}"
+    client_id: "{{ agentstack_ui_client_id }}"
+    name: "AgentStack UI"
+    description: "Browser-based OIDC client for the AgentStack web UI"
+    enabled: true
+    protocol: openid-connect
+    # Confidential (not public)
+    public_client: false
+    # Standard authorization code flow for browser login
+    standard_flow_enabled: true
+    implicit_flow_enabled: false
+    # ROPC disabled (DECISION 2026-06-20 / reqs §3.2 / §7):
+    # Only enable if beeai CLI login proves to require it (Phase 4 test).
+    direct_access_grants_enabled: false
+    service_accounts_enabled: false
+    # Scoped to the real UI host — never wildcard "*" (reqs §4.6)
+    redirect_uris: "{{ agentstack_ui_redirect_uris }}"
+    web_origins: "{{ agentstack_ui_web_origins }}"
+    # Default scopes: standard OIDC scopes + audience scope so every token
+    # issued for this client carries aud=agentstack-server.
+    # This list is the FULL desired default-scope set; Keycloak enforces it exactly.
+    default_client_scopes: "{{ agentstack_ui_default_client_scopes }}"
+    state: present
+  register: ui_client_result
+  no_log: "{{ not (garrison_log_nolog | default(false) | bool) }}"
+
+- name: Report agentstack-ui client provisioning outcome
+  ansible.builtin.debug:
+    msg: "agentstack-ui client {{ 'created' if ui_client_result.changed else 'already up-to-date' }}"
+
+# ── agentstack-server ─────────────────────────────────────────────────────────
+
+- name: Create / update agentstack-server OIDC client
+  community.general.keycloak_client:
+    auth_keycloak_url: "{{ keycloak_addr }}"
+    auth_realm: "{{ keycloak_auth_realm }}"
+    auth_username: "{{ keycloak_admin_user }}"
+    auth_password: "{{ keycloak_admin_password }}"
+    validate_certs: "{{ keycloak_tls_verify }}"
+    realm: "{{ agentstack_keycloak_realm }}"
+    client_id: "{{ agentstack_server_client_id }}"
+    name: "AgentStack Server"
+    description: "Service-account OIDC client for the AgentStack backend API"
+    enabled: true
+    protocol: openid-connect
+    # Confidential
+    public_client: false
+    # M2M / service account — no browser flow
+    standard_flow_enabled: false
+    implicit_flow_enabled: false
+    # ROPC starts false — see ticket §ROPC caveat / Phase 4 test
+    direct_access_grants_enabled: false
+    service_accounts_enabled: true
+    state: present
+  register: server_client_result
+  no_log: "{{ not (garrison_log_nolog | default(false) | bool) }}"
+
+- name: Report agentstack-server client provisioning outcome
+  ansible.builtin.debug:
+    msg: "agentstack-server client {{ 'created' if server_client_result.changed else 'already up-to-date' }}"

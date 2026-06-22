@@ -1,0 +1,176 @@
+---
+# agentstack_keycloak/tasks/roles_and_users.yml
+#
+# Provision realm roles and the seed admin user in the agentstack realm.
+#
+# Realm roles:
+#   - agentstack-admin    (full admin access to AgentStack)
+#   - agentstack-developer (developer access)
+#
+# Seed admin user:
+#   - Username / email from defaults (agentstack_seed_admin_username)
+#   - Assigned the agentstack-admin realm role
+#   - Password sourced from OpenBao KV (generate-if-absent — principle #2):
+#       path: {{ openbao_kv_mount }}/data/{{ openbao_kv_prefix }}/{{ agentstack_seed_admin_password_kv_subpath }}
+#     This ensures the password is stable across runs (no fresh random on re-run)
+#     and gains audit provenance from OpenBao.
+#
+# Password idempotency note:
+#   community.general.keycloak_user with credentials always sets the password in
+#   Keycloak (Keycloak hashes prevent comparison). This means the task will report
+#   changed: true on every run even when the password is unchanged. The VALUE is
+#   stable (from OpenBao) so convergence is guaranteed; only the changed signal is
+#   noisy. This is a known limitation of the keycloak_user module.
+#
+# Prerequisites:
+#   - Realm agentstack exists (realm.yml)
+#   - CA proof passed; keycloak_admin_user / keycloak_admin_password facts set
+#   - openbao_provisioner_token fact set (by openbao_bootstrap role)
+#   - openbao_addr, openbao_tls_verify, internal_ca_bundle_path defined
+#   - openbao_kv_mount, openbao_kv_prefix, agentstack_seed_admin_password_kv_subpath defined
+
+# ── Realm roles ───────────────────────────────────────────────────────────────
+
+- name: Create / update realm roles
+  community.general.keycloak_role:
+    auth_keycloak_url: "{{ keycloak_addr }}"
+    auth_realm: "{{ keycloak_auth_realm }}"
+    auth_username: "{{ keycloak_admin_user }}"
+    auth_password: "{{ keycloak_admin_password }}"
+    validate_certs: "{{ keycloak_tls_verify }}"
+    realm: "{{ agentstack_keycloak_realm }}"
+    name: "{{ item }}"
+    state: present
+  loop: "{{ agentstack_realm_roles }}"
+  register: realm_roles_result
+  no_log: "{{ not (garrison_log_nolog | default(false) | bool) }}"
+
+- name: Report realm roles provisioning outcome
+  ansible.builtin.debug:
+    msg: >-
+      Realm roles: {{ realm_roles_result.results | map(attribute='item') | zip(
+        realm_roles_result.results | map(attribute='changed') | map('ternary', 'created', 'already up-to-date')
+      ) | list }}
+
+# ── Seed admin user — password (generate-if-absent from OpenBao) ──────────────
+
+- name: Check if seed admin password already exists in OpenBao
+  ansible.builtin.uri:
+    url: >-
+      {{ openbao_addr }}/v1/{{ openbao_kv_mount }}/metadata/{{
+        openbao_kv_prefix }}/{{ agentstack_seed_admin_password_kv_subpath }}
+    method: GET
+    headers:
+      X-Vault-Token: "{{ openbao_provisioner_token }}"
+      X-Vault-Request: "true"
+    validate_certs: "{{ openbao_tls_verify }}"
+    ca_path: "{{ internal_ca_bundle_path }}"
+    status_code: [200, 404]
+  register: seed_pw_metadata
+  changed_when: false
+  no_log: true
+
+# Generate a cryptographically random password when the KV path is absent.
+# python3 secrets module is available on the target VM (armory already uses it).
+- name: Generate seed admin password (if absent)
+  ansible.builtin.command:
+    cmd: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+  register: _seed_pw_generated
+  changed_when: false
+  when: seed_pw_metadata.status == 404
+  no_log: true
+
+- name: Write seed admin password to OpenBao (if absent)
+  ansible.builtin.uri:
+    url: >-
+      {{ openbao_addr }}/v1/{{ openbao_kv_mount }}/data/{{
+        openbao_kv_prefix }}/{{ agentstack_seed_admin_password_kv_subpath }}
+    method: POST
+    headers:
+      X-Vault-Token: "{{ openbao_provisioner_token }}"
+      X-Vault-Request: "true"
+    body_format: json
+    body:
+      data:
+        password: "{{ _seed_pw_generated.stdout | trim }}"
+    validate_certs: "{{ openbao_tls_verify }}"
+    ca_path: "{{ internal_ca_bundle_path }}"
+    status_code: [200, 204]
+  when: seed_pw_metadata.status == 404
+  no_log: true
+
+- name: Read seed admin password from OpenBao
+  ansible.builtin.uri:
+    url: >-
+      {{ openbao_addr }}/v1/{{ openbao_kv_mount }}/data/{{
+        openbao_kv_prefix }}/{{ agentstack_seed_admin_password_kv_subpath }}
+    method: GET
+    headers:
+      X-Vault-Token: "{{ openbao_provisioner_token }}"
+      X-Vault-Request: "true"
+    validate_certs: "{{ openbao_tls_verify }}"
+    ca_path: "{{ internal_ca_bundle_path }}"
+    status_code: [200]
+  register: seed_pw_read
+  changed_when: false
+  no_log: true
+
+- name: Set seed admin password fact
+  ansible.builtin.set_fact:
+    agentstack_seed_admin_password: "{{ seed_pw_read.json.data.data.password }}"
+  changed_when: false
+  no_log: true
+
+# ── Seed admin user ───────────────────────────────────────────────────────────
+
+- name: Create / update seed admin user with agentstack-admin realm role
+  community.general.keycloak_user:
+    auth_keycloak_url: "{{ keycloak_addr }}"
+    auth_realm: "{{ keycloak_auth_realm }}"
+    auth_username: "{{ keycloak_admin_user }}"
+    auth_password: "{{ keycloak_admin_password }}"
+    validate_certs: "{{ keycloak_tls_verify }}"
+    realm: "{{ agentstack_keycloak_realm }}"
+    username: "{{ agentstack_seed_admin_username }}"
+    email: "{{ agentstack_seed_admin_email }}"
+    firstName: "{{ agentstack_seed_admin_first_name }}"
+    lastName: "{{ agentstack_seed_admin_last_name }}"
+    enabled: true
+    emailVerified: true
+    credentials:
+      - type: password
+        value: "{{ agentstack_seed_admin_password }}"
+        temporary: false
+    state: present
+  register: seed_user_result
+  no_log: "{{ not (garrison_log_nolog | default(false) | bool) }}"
+  # NOTE: keycloak_user with credentials will set the password on every run
+  # because Keycloak hashes prevent equality comparison. The value is stable
+  # (sourced from OpenBao), so the system converges correctly; only the
+  # `changed` signal is noisy. Known module limitation.
+  # Role assignment is a SEPARATE step below: keycloak_user has no role
+  # parameter — realm-role mapping is done via keycloak_user_rolemapping.
+
+- name: Assign agentstack-admin realm role to the seed admin user
+  community.general.keycloak_user_rolemapping:
+    auth_keycloak_url: "{{ keycloak_addr }}"
+    auth_realm: "{{ keycloak_auth_realm }}"
+    auth_username: "{{ keycloak_admin_user }}"
+    auth_password: "{{ keycloak_admin_password }}"
+    validate_certs: "{{ keycloak_tls_verify }}"
+    realm: "{{ agentstack_keycloak_realm }}"
+    target_username: "{{ agentstack_seed_admin_username }}"
+    # No client_id/cid → realm-level role mapping.
+    roles:
+      - name: "{{ agentstack_seed_admin_role }}"
+    state: present
+  register: seed_user_rolemap_result
+  no_log: "{{ not (garrison_log_nolog | default(false) | bool) }}"
+
+- name: Report seed user provisioning outcome
+  ansible.builtin.debug:
+    msg: >-
+      Seed admin user '{{ agentstack_seed_admin_username }}'
+      {{ 'created/updated' if seed_user_result.changed else 'already up-to-date' }};
+      realm role '{{ agentstack_seed_admin_role }}'
+      {{ 'mapped' if seed_user_rolemap_result.changed else 'already mapped' }}

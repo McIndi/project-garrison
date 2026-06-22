@@ -1,0 +1,47 @@
+---
+# agentstack_keycloak/tasks/realm.yml
+#
+# Create or update the `agentstack` Keycloak realm.
+#
+# Uses community.general.keycloak_realm (idempotent by construction: the module
+# diffs desired vs actual and only updates when state diverges).
+#
+# IMPORTANT — NO clientScopes block here.
+# Including a clientScopes definition in the realm suppresses Keycloak's built-in
+# scopes (email, profile, roles, web-origins, etc.) and breaks sign-in. Client
+# scopes are managed separately in client_scopes.yml.
+#
+# Audit events are enabled in the same call (DECISION 2026-06-20): garrison owns
+# the agentstack realm end-to-end; armory owns only the listener/retention pipe.
+#
+# Prerequisites:
+#   - CA proof passed (ca_proof.yml) — system trust store contains internal CA
+#   - keycloak_admin_user / keycloak_admin_password facts set
+#   - keycloak_addr, keycloak_tls_verify, keycloak_auth_realm defined
+
+- name: Create / update agentstack realm
+  community.general.keycloak_realm:
+    auth_keycloak_url: "{{ keycloak_addr }}"
+    auth_realm: "{{ keycloak_auth_realm }}"
+    auth_username: "{{ keycloak_admin_user }}"
+    auth_password: "{{ keycloak_admin_password }}"
+    validate_certs: "{{ keycloak_tls_verify }}"
+    # Realm identity
+    id: "{{ agentstack_keycloak_realm }}"
+    realm: "{{ agentstack_keycloak_realm }}"
+    displayName: "{{ agentstack_keycloak_realm_display_name }}"
+    enabled: true
+    # Audit events — login + admin, jboss-logging listener, 30-day retention.
+    # These are Keycloak REST API camelCase field names as exposed by the module.
+    eventsEnabled: "{{ agentstack_events_enabled }}"
+    eventsListeners: "{{ agentstack_events_listeners }}"
+    adminEventsEnabled: "{{ agentstack_admin_events_enabled }}"
+    adminEventsDetailsEnabled: "{{ agentstack_admin_events_details_enabled }}"
+    eventsExpiration: "{{ agentstack_events_expiration }}"
+    state: present
+  register: keycloak_realm_result
+  no_log: "{{ not (garrison_log_nolog | default(false) | bool) }}"
+
+- name: Report realm provisioning outcome
+  ansible.builtin.debug:
+    msg: "agentstack realm {{ 'created' if keycloak_realm_result.changed else 'already up-to-date' }}"

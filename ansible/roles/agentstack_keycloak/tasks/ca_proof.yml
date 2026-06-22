@@ -1,0 +1,85 @@
+---
+# agentstack_keycloak/tasks/ca_proof.yml
+#
+# Phase 1, step 1 — prove the community.general.keycloak_* module→internal-CA path.
+#
+# Background (ticket §Phase 1 / principle #3):
+#   community.general.keycloak_* modules use Ansible's open_url() internally, which
+#   does NOT honour the REQUESTS_CA_BUNDLE or SSL_CERT_FILE environment variables
+#   (those are Python-requests conventions). The only reliable way to make them
+#   validate armory's internal-CA (pki-int) HTTPS endpoint with validate_certs: true
+#   is to install the CA bundle into the OS trust store, which open_url respects on
+#   Linux (via the system ca-bundle, e.g. /etc/pki/tls/certs/ca-bundle.crt on Fedora).
+#
+# This task file:
+#   1. Installs the combined internal CA bundle into the Fedora/RHEL system trust
+#      store (/etc/pki/ca-trust/source/anchors/) and runs update-ca-trust extract.
+#      (Requires become: true on individual tasks; see note below.)
+#   2. Calls community.general.keycloak_realm_info to READ the master realm — a
+#      genuinely read-only, non-mutating proof that the module can validate TLS
+#      with validate_certs: true against keycloak's internal HTTPS endpoint.
+#      (keycloak_realm state:present would WRITE to master — avoided deliberately.)
+#
+# If step 2 fails with an SSL error, the internal CA was not trusted by open_url.
+# In that case, per principle #3, the affected step(s) fall back to ansible.builtin.uri
+# with ca_path, and only those steps — the module approach is not abandoned wholesale.
+# Record the finding in the ticket notes.
+#
+# Prerequisites:
+#   - internal_ca_bundle_path is set and the file exists on disk
+#     (written by prepare_internal_https_caller.yml earlier in main.yml)
+#   - keycloak_admin_user / keycloak_admin_password facts are set
+#     (loaded by load_keycloak_admin_creds.yml earlier in main.yml)
+#   - keycloak_addr and keycloak_tls_verify are defined (group_vars / defaults)
+
+# ── Step 1: install CA into system trust store ────────────────────────────────
+
+- name: Install combined internal CA bundle into system trust store
+  ansible.builtin.copy:
+    src: "{{ internal_ca_bundle_path }}"
+    dest: "{{ agentstack_ca_trust_anchors_dir }}/{{ agentstack_ca_trust_anchor_filename }}"
+    remote_src: true
+    mode: "0644"
+  become: true
+  # Idempotent: copy only reports changed when the content actually differs.
+
+- name: Rebuild system CA trust store
+  ansible.builtin.command:
+    cmd: update-ca-trust extract
+  become: true
+  # update-ca-trust is idempotent: no-op if anchors haven't changed,
+  # but there's no reliable exit-code signal for "nothing changed".
+  changed_when: false
+
+# ── Step 2: module→CA proof ───────────────────────────────────────────────────
+
+# Read-only: keycloak_realm_info GETs the public /realms/master endpoint. It does
+# NOT mutate the master realm (unlike keycloak_realm state:present), and it uses
+# the same open_url path, so a success proves the system trust store now lets the
+# keycloak_* modules validate the internal-CA HTTPS endpoint with validate_certs.
+- name: "CA-proof — read master realm via keycloak_realm_info (validate_certs: true)"
+  community.general.keycloak_realm_info:
+    auth_keycloak_url: "{{ keycloak_addr }}"
+    realm: master
+    validate_certs: "{{ keycloak_tls_verify }}"
+  register: keycloak_realm_ca_proof
+  changed_when: false
+  # If this task fails with an SSL/TLS error the system trust-store update did
+  # not take effect (or the CA bundle is wrong). Check:
+  #   - internal_ca_bundle_path contains the correct root PEM
+  #   - update-ca-trust ran as root
+  #   - The Keycloak service certificate chains to one of the bundled roots
+  # Fallback per principle #3: use ansible.builtin.uri with ca_path for that step.
+
+- name: Assert CA proof passed (module validated TLS via system trust store)
+  ansible.builtin.assert:
+    that:
+      - keycloak_realm_ca_proof.realm_info is defined
+      - (keycloak_realm_ca_proof.realm_info.realm | default('')) == 'master'
+    success_msg: >-
+      keycloak_realm_info validated {{ keycloak_addr }} over TLS with
+      validate_certs: true (system trust store contains the internal CA).
+      Module-based provisioning confirmed safe to proceed.
+    fail_msg: >-
+      keycloak_realm_info did not return the master realm — TLS validation or
+      connectivity failed. Confirm the internal CA is in the system trust store.
