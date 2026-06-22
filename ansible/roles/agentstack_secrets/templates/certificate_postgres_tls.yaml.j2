@@ -1,0 +1,14 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ agentstack_db_tls_cert_name }}
+  namespace: {{ agentstack_namespace }}
+spec:
+  secretName: {{ agentstack_db_tls_cert_name }}
+  issuerRef:
+    name: {{ agentstack_db_cert_issuer }}
+    kind: ClusterIssuer
+  commonName: {{ agentstack_db_service_fqdn }}
+  dnsNames:
+    - {{ agentstack_db_service_fqdn }}

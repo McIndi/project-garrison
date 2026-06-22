@@ -1,0 +1,13 @@
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  name: {{ agentstack_vault_auth_name }}
+  namespace: {{ agentstack_namespace }}
+spec:
+  method: kubernetes
+  mount: {{ agentstack_vault_auth_path }}
+  kubernetes:
+    role: {{ agentstack_vault_auth_role }}
+    serviceAccount: {{ agentstack_vso_sa_name }}
+  vaultConnectionRef: {{ agentstack_vault_connection_name }}

@@ -1,0 +1,77 @@
+---
+# agentstack_secrets/tasks/trust_bundles.yml
+#
+# Phase 2, Task 4: trust-manager Bundle distribution.
+#
+# Distributes two internal CAs into the agentstack namespace. trust-manager runs
+# with --trust-namespace=openbao, so BOTH sources are secrets in the openbao ns:
+#   1. OpenBao listener CA (openbao-ca)      → for the VSO VaultConnection (Phase 2)
+#   2. Public/external CA   (openbao-ui-tls) → for pod OIDC validation (Phase 3)
+#
+# The OpenBao CA Bundle is applied FIRST (in main.yml, before the VSO resources)
+# so the VaultConnection's caCertSecretRef secret exists when VSO connects.
+
+# ── OpenBao listener CA Bundle (required by VSO) ──────────────────────────────
+
+- name: "Apply trust-manager Bundle for the OpenBao listener CA"
+  kubernetes.core.k8s:
+    definition: "{{ lookup('template', 'bundle_pki_int.yaml.j2') | from_yaml }}"
+    state: present
+
+- name: "Wait for OpenBao CA Bundle to sync into agentstack namespace"
+  kubernetes.core.k8s_info:
+    kind: Secret
+    name: "{{ agentstack_trust_openbao_ca_bundle_name }}"
+    namespace: "{{ agentstack_namespace }}"
+  register: _openbao_ca_bundle_synced
+  until: _openbao_ca_bundle_synced.resources | length > 0
+  retries: 30
+  delay: 2
+
+- name: "Verify OpenBao CA Bundle Secret has ca.crt"
+  ansible.builtin.assert:
+    that:
+      - _openbao_ca_bundle_synced.resources[0].data is defined
+      - "'ca.crt' in _openbao_ca_bundle_synced.resources[0].data"
+    fail_msg: |
+      OpenBao CA Bundle did not sync. Expected a Secret named
+      {{ agentstack_trust_openbao_ca_bundle_name }} with key ca.crt in
+      {{ agentstack_namespace }}. Confirm the source secret
+      {{ agentstack_trust_openbao_ca_source_secret_name }} exists in the
+      trust-manager trust namespace (openbao).
+
+# ── Public/external CA Bundle (for Phase 3 pod OIDC validation) ───────────────
+
+- name: "Apply trust-manager Bundle for the public/external CA"
+  kubernetes.core.k8s:
+    definition: "{{ lookup('template', 'bundle_pki_ext.yaml.j2') | from_yaml }}"
+    state: present
+
+- name: "Wait for public CA Bundle to sync into agentstack namespace"
+  kubernetes.core.k8s_info:
+    kind: Secret
+    name: "{{ agentstack_trust_public_ca_bundle_name }}"
+    namespace: "{{ agentstack_namespace }}"
+  register: _public_ca_bundle_synced
+  until: _public_ca_bundle_synced.resources | length > 0
+  retries: 30
+  delay: 2
+
+- name: "Verify public CA Bundle Secret has ca.crt"
+  ansible.builtin.assert:
+    that:
+      - _public_ca_bundle_synced.resources[0].data is defined
+      - "'ca.crt' in _public_ca_bundle_synced.resources[0].data"
+    fail_msg: |
+      Public CA Bundle did not sync. Expected a Secret named
+      {{ agentstack_trust_public_ca_bundle_name }} with key ca.crt in
+      {{ agentstack_namespace }}. Confirm the source secret
+      {{ agentstack_trust_public_ca_source_secret_name }} exists in the
+      trust-manager trust namespace (openbao).
+
+- name: "Report trust-manager Bundle outcome"
+  ansible.builtin.debug:
+    msg: >-
+      Trust bundles synced into {{ agentstack_namespace }}:
+      {{ agentstack_trust_openbao_ca_bundle_name }} (OpenBao CA, for VSO) +
+      {{ agentstack_trust_public_ca_bundle_name }} (public CA, for pod OIDC).

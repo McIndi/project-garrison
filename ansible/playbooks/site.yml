@@ -2,6 +2,11 @@
 - name: Deploy Agent Stack against external armory Keycloak
   hosts: all
   gather_facts: true
+  # Default kubeconfig for all kubernetes.core.* tasks that don't pass one
+  # explicitly (honored via the K8S_AUTH_KUBECONFIG env var). Explicit
+  # `kubeconfig:` on a task still overrides this.
+  environment:
+    K8S_AUTH_KUBECONFIG: "{{ lookup('ansible.builtin.env', 'ARMORY_KUBECONFIG_PATH') | default('/etc/rancher/k3s/k3s.yaml', true) }}"
   roles:
     - role: preflight
       tags:
@@ -18,6 +23,10 @@
       tags:
         - agentstack_keycloak
 
-    # Next phases will add deploy roles in this order:
-    # - agentstack_secrets
+    - role: agentstack_secrets
+      tags:
+        - agentstack_secrets
+
+    # Phase 3 role (coming later):
+    # - agentstack_db
     # - agentstack

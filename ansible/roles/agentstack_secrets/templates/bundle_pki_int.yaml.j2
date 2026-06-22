@@ -1,0 +1,23 @@
+---
+# OpenBao listener CA (CN=OpenBao-Internal-CA) → agentstack namespace.
+# Used by the VSO VaultConnection to validate the OpenBao API over TLS.
+# trust-manager reads this source from its --trust-namespace (openbao), so the
+# source secret (openbao-ca) MUST live in the openbao namespace.
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: {{ agentstack_trust_openbao_ca_bundle_name }}
+spec:
+  sources:
+    - secret:
+        name: {{ agentstack_trust_openbao_ca_source_secret_name }}
+        key: {{ agentstack_trust_openbao_ca_source_key }}
+  target:
+    secret:
+      key: {{ agentstack_trust_openbao_ca_target_key }}
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            - {{ agentstack_namespace }}

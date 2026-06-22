@@ -1,0 +1,115 @@
+---
+# agentstack_secrets role defaults
+#
+# Phase 2: Secret provisioning + trust-manager Bundle distribution.
+# Generates and delivers all secrets the agentstack chart consumes (OIDC clients,
+# Postgres, Redis, encryptionKey, auth.nextauthSecret, etc.) via OpenBao KV +
+# VSO VaultStaticSecret CRs or direct Helm values, per principle #4.
+#
+# Inherits from common: openbao_addr, openbao_tls_verify, internal_ca_bundle_path,
+# openbao_kv_mount, openbao_kv_prefix, openbao_provisioner_token. These are set
+# by openbao_bootstrap and common tasks before this role runs.
+
+# ── OpenBao provisioning ──────────────────────────────────────────────────────
+# KV layout is FLAT under the garrison prefix (no sub-folders) — the teardown
+# purge is flat-only (F3 decision); a nested garrison/agentstack/ folder would be
+# orphaned on teardown. Each Phase 2 secret is a flat key: garrison/agentstack-*.
+agentstack_openbao_kv_prefix: "{{ openbao_kv_prefix }}"
+
+# ── OIDC client secrets (Phase 2, Task 2) ────────────────────────────────────
+# These are the *values* — not the Keycloak client objects (those were Phase 1).
+# The secrets are generated once, stored in OpenBao, and synced to k8s Secrets
+# via VSO VaultStaticSecret CRs.
+# Both client secrets live in ONE KV entry with the two keys the chart's
+# externalOidcProvider.existingSecret expects (uiClientSecret/serverClientSecret),
+# so a single VaultStaticSecret can mirror them into one k8s Secret.
+agentstack_oidc_secrets_openbao_path: "{{ agentstack_openbao_kv_prefix }}/agentstack-oidc-client-secrets"
+
+# VSO resources (Vault connection, auth, static secrets)
+agentstack_vault_connection_name: agentstack-vault-connection
+agentstack_vault_auth_name: agentstack-vault-auth
+agentstack_vault_auth_method: kubernetes
+agentstack_vault_auth_path: kubernetes        # MUST match openbao_bootstrap openbao_k8s_auth_mount
+agentstack_vault_auth_role: garrison          # MUST match openbao_bootstrap garrison_vso_k8s_role
+# VSO ServiceAccount. MUST match openbao_bootstrap garrison_vso_sa_name — it is
+# the SA the k8s auth role `garrison` is bound to. Defined as a literal here
+# because role defaults from openbao_bootstrap are NOT in scope in this role.
+agentstack_vso_sa_name: agentstack-vso
+agentstack_client_secrets_vso_name: agentstack-client-secrets
+agentstack_client_secrets_secret_name: agentstack-oidc-client-secrets
+agentstack_client_secrets_refresh_after: 3600s  # Re-sync every hour
+
+# ── Postgres DB secrets (Phase 2, Task 5) ────────────────────────────────────
+agentstack_db_openbao_path: "{{ agentstack_openbao_kv_prefix }}/agentstack-postgres"
+agentstack_db_username: agentstack
+agentstack_db_database: agentstack
+agentstack_db_vso_name: agentstack-postgres-db-secret
+agentstack_db_secret_name: agentstack-postgres-credentials
+agentstack_db_service_fqdn: "agentstack-postgresql.{{ agentstack_namespace }}.svc.cluster.local"
+
+# ── Postgres TLS certificate (Phase 2, Task 5) ────────────────────────────────
+agentstack_db_cert_issuer: openbao-pki-internal  # ClusterIssuer in cert-manager
+agentstack_db_tls_cert_name: agentstack-postgresql-tls
+
+# ── Other secrets (encryptionKey, auth.nextauthSecret) (Phase 2, Task 3) ──────
+# These have no existingSecret hook in the chart, so they are NOT synced via
+# VSO. Instead, they are generated in OpenBao, read by Ansible, and injected
+# as Helm values at deploy time (Phase 3).
+agentstack_encryption_key_openbao_path: "{{ agentstack_openbao_kv_prefix }}/agentstack-encryption-key"
+agentstack_encryption_key_length: 32  # bytes, base64-encoded
+
+agentstack_nextauth_secret_openbao_path: "{{ agentstack_openbao_kv_prefix }}/agentstack-nextauth-secret"
+agentstack_nextauth_secret_length: 32  # bytes, base64-encoded
+
+# Redis auth (conditional; only if redis.enabled: true in chart values)
+agentstack_redis_openbao_path: "{{ agentstack_openbao_kv_prefix }}/agentstack-redis"
+agentstack_redis_vso_name: agentstack-redis-secret
+agentstack_redis_secret_name: agentstack-redis-credentials
+
+# SeaweedFS credentials (if seaweedfs.enabled: true)
+agentstack_seaweedfs_openbao_path: "{{ agentstack_openbao_kv_prefix }}/agentstack-seaweedfs"
+agentstack_seaweedfs_vso_name: agentstack-seaweedfs-secret
+agentstack_seaweedfs_secret_name: agentstack-seaweedfs-credentials
+
+# ── trust-manager Bundles (Phase 2, Task 4) ──────────────────────────────────
+# IMPORTANT: trust-manager runs with --trust-namespace=openbao, so it reads ALL
+# `secret` sources from the `openbao` namespace ONLY (the source's namespace is
+# ignored). Both CAs garrison distributes MUST therefore be sourced from a secret
+# that exists in the openbao namespace.
+#
+# Bundle 1 — OpenBao listener CA (CN=OpenBao-Internal-CA). This is what VSO needs
+#   to validate the OpenBao API (https://openbao.openbao.svc:8200). Sourced from
+#   the openbao-ca secret in the openbao ns. Referenced by the VaultConnection.
+agentstack_trust_openbao_ca_bundle_name: agentstack-openbao-ca
+agentstack_trust_openbao_ca_source_secret_name: openbao-ca
+agentstack_trust_openbao_ca_source_key: ca.crt
+agentstack_trust_openbao_ca_target_key: ca.crt
+
+# Bundle 2 — Public/external CA (CN=Armory Root CA). What agentstack PODS need to
+#   validate the public OIDC issuer (https://<armory-host>/realms/agentstack,
+#   served by nginx-ingress armory-tls, issued by openbao-pki-external → chains to
+#   Armory Root CA). Sourced from openbao-ui-tls ca.crt in the openbao ns (carries
+#   the Armory Root CA and lives in the trust namespace). For Phase 3 pod use.
+agentstack_trust_public_ca_bundle_name: agentstack-public-ca
+agentstack_trust_public_ca_source_secret_name: openbao-ui-tls
+agentstack_trust_public_ca_source_key: ca.crt
+agentstack_trust_public_ca_target_key: ca.crt
+
+# VaultConnection caCertSecretRef: the in-namespace Secret created by the OpenBao
+# CA Bundle above (trust-manager names the target Secret after the Bundle).
+agentstack_vault_connection_ca_secret_name: "{{ agentstack_trust_openbao_ca_bundle_name }}"
+
+# ── Namespace context ──────────────────────────────────────────────────────────
+# Reused from group_vars; ensure agentstack_namespace is set globally.
+# agentstack_namespace: agentstack  (should be defined in group_vars/all.yml)
+
+# ── Helm secret key contract (from chart defaults) ─────────────────────────────
+# These are the fixed key names the agentstack chart expects in the OIDC
+# existingSecret (§2 of reqs doc, confirmed 0.7.2).
+agentstack_ui_client_secret_key: uiClientSecret
+agentstack_server_client_secret_key: serverClientSecret
+
+# ── Idempotency — secret generation modes ────────────────────────────────────
+# generate-if-absent policy: read from OpenBao first; only create if missing.
+# This ensures secrets are stable across re-runs (principle #2).
+agentstack_secrets_generate_mode: true  # Enable generation; set false to error on missing

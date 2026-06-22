@@ -1,0 +1,24 @@
+---
+# Public/external CA (CN=Armory Root CA) → agentstack namespace.
+# Used by agentstack PODS at runtime to validate the public OIDC issuer
+# (https://<armory-host>/realms/agentstack via nginx-ingress armory-tls).
+# Sourced from openbao-ui-tls's ca.crt, which carries the Armory Root CA and
+# lives in the openbao trust namespace (trust-manager --trust-namespace=openbao).
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: {{ agentstack_trust_public_ca_bundle_name }}
+spec:
+  sources:
+    - secret:
+        name: {{ agentstack_trust_public_ca_source_secret_name }}
+        key: {{ agentstack_trust_public_ca_source_key }}
+  target:
+    secret:
+      key: {{ agentstack_trust_public_ca_target_key }}
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            - {{ agentstack_namespace }}

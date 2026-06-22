@@ -1,0 +1,14 @@
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultConnection
+metadata:
+  name: {{ agentstack_vault_connection_name }}
+  namespace: {{ agentstack_namespace }}
+spec:
+  address: {{ openbao_addr }}
+  tlsServerName: openbao.openbao.svc.cluster.local
+  # In-namespace Secret synced by the OpenBao CA trust-manager Bundle (applied
+  # before this VaultConnection). VSO reads the ca.crt key from this Secret, so
+  # caCertSecretRef is just the Secret NAME (a string). Carries OpenBao-Internal-CA.
+  caCertSecretRef: {{ agentstack_vault_connection_ca_secret_name }}
+  skipTLSVerify: false

@@ -1,0 +1,64 @@
+---
+# agentstack_secrets/tasks/main.yml — Phase 2: Secrets + trust
+#
+# Provisions all secrets the agentstack chart consumes or generates, plus
+# distributes internal CAs into the agentstack namespace via trust-manager Bundles.
+#
+# Execution order (ordering matters — VSO needs the namespace, its SA, and the
+# OpenBao CA Secret in place BEFORE the VaultConnection/VaultStaticSecret apply):
+#   1. prepare_internal_https_caller  — assemble combined CA bundle on disk (common)
+#   2. secret_inventory               — discover ALL chart secrets; enumerate defaults
+#   3. namespace + VSO ServiceAccount — prerequisites for trust-manager + VSO auth
+#   4. trust_bundles                  — distribute OpenBao CA (for VSO) + public CA
+#   5. oidc_client_secrets            — generate OIDC secrets + VSO sync
+#   6. postgres_secrets               — generate Postgres creds + TLS cert + VSO sync
+#   7. other_secrets                  — encryptionKey, auth.nextauthSecret, Redis, SeaweedFS
+#
+# All tasks are idempotent by construction (principle #2). Generate-if-absent
+# applies to all secrets. The openbao_provisioner_token fact must be set
+# before this role runs (by the openbao_bootstrap role in site.yml).
+
+# ── Prerequisites ─────────────────────────────────────────────────────────────
+
+- name: Assemble combined internal CA trust bundle
+  ansible.builtin.include_tasks:
+    file: "{{ role_path }}/../common/tasks/prepare_internal_https_caller.yml"
+
+# ── Phase 2 task files ────────────────────────────────────────────────────────
+
+- name: "Phase 2 — Secret inventory: discover ALL chart secrets + defaults"
+  ansible.builtin.include_tasks:
+    file: secret_inventory.yml
+
+- name: "Ensure agentstack namespace exists (target for trust bundles + VSO)"
+  kubernetes.core.k8s:
+    kind: Namespace
+    api_version: v1
+    name: "{{ agentstack_namespace }}"
+    state: present
+
+- name: "Create VSO ServiceAccount in {{ agentstack_namespace }} (bound by the garrison k8s auth role)"
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: "{{ agentstack_vso_sa_name }}"
+        namespace: "{{ agentstack_namespace }}"
+
+- name: "Phase 2 — trust-manager Bundles: OpenBao CA (for VSO) + public CA → agentstack"
+  ansible.builtin.include_tasks:
+    file: trust_bundles.yml
+
+- name: "Phase 2 — OIDC client secrets: generate + OpenBao KV + VSO"
+  ansible.builtin.include_tasks:
+    file: oidc_client_secrets.yml
+
+- name: "Phase 2 — Postgres DB secrets + TLS cert"
+  ansible.builtin.include_tasks:
+    file: postgres_secrets.yml
+
+- name: "Phase 2 — Other secrets: encryptionKey, auth.nextauthSecret, Redis, SeaweedFS"
+  ansible.builtin.include_tasks:
+    file: other_secrets.yml

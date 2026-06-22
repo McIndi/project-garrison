@@ -474,3 +474,52 @@ _(running log — decisions, blockers, findings)_
   policy first; should be consolidated.
 - Open input still needed before Phase 3: the concrete `<armory-domain>` /
   public Keycloak host string for the issuer URL + UI host.
+- 2026-06-22 — **Phase 2 STARTED (scaffolding complete).** Built the full
+  `agentstack_secrets` role (Phase 2: Secrets + trust). Structure:
+    - `defaults/main.yml` — 50+ parameterized vars for OpenBao paths, VSO resources,
+      trust bundles, secret names.
+    - `tasks/main.yml` — Orchestrator (5 subtasks in sequence).
+    - `tasks/secret_inventory.yml` — Read-only discovery pass; outputs table of
+      ALL chart secrets (OIDC, Postgres, Redis, SeaweedFS, encryptionKey,
+      auth.nextauthSecret) + defaults + delivery methods per §4.5 of reqs.
+    - `tasks/oidc_client_secrets.yml` — Generate-if-absent OIDC client secrets
+      in OpenBao KV, update Keycloak clients (via REST, not module — modules don't
+      support internal CA per Phase 1 caveat), apply VSO
+      VaultConnection/VaultAuth/VaultStaticSecret, wait for sync, verify Secret keys.
+    - `tasks/postgres_secrets.yml` — Generate-if-absent Postgres creds + write to
+      OpenBao, apply VSO VaultStaticSecret, apply cert-manager Certificate (pki-int
+      TLS for DB service FQDN), wait for both syncs + cert issuance.
+    - `tasks/other_secrets.yml` — Generate-if-absent hookless secrets
+      (encryptionKey, auth.nextauthSecret) + Redis + SeaweedFS, store in OpenBao,
+      cache facts for Phase 3 Helm injection (not VSO — no existingSecret hooks).
+    - `tasks/trust_bundles.yml` — Apply trust-manager Bundles (pki-int +
+      pki-ext) to distribute CAs into agentstack namespace for runtime OIDC +
+      provisioning trust paths.
+    - `templates/*.yaml.j2` — Jinja CRD templates for VaultConnection, VaultAuth,
+      VaultStaticSecret (OIDC + Postgres), Certificate, Bundles.
+    - `README.md` — 300-line implementation guide (pattern + vars + inventory
+      table + testing + known limitations + Phase 3 integration).
+  - **Key decisions baked into Phase 2:**
+    (1) **REST-only Keycloak client updates** (uri, not keycloak_client module).
+        Modules use `open_url` which ignores SSL_CERT_FILE/REQUESTS_CA_BUNDLE.
+        Fix: use uri + ca_path. DEVIATION from module-first, but only for this
+        step; VSO resources use modules normally.
+    (2) **Hookless secrets as Helm facts, not VSO Secrets** (encryptionKey,
+        auth.nextauthSecret per §4.5). These have no existingSecret hook; syncing
+        would lose them (chart ignores synced Secrets; only values are rendered).
+        Solution: OpenBao→read→fact→Phase 3 --set.
+    (3) **Conditional secrets (Redis, SeaweedFS)** generated but VSO resources
+        NOT applied here. Phase 3 must check redis.enabled / seaweedfs.enabled
+        before consuming. If disabled, OpenBao KV paths are harmless orphans.
+    (4) **cert-manager Certificate for Postgres** uses openbao-pki-internal
+        ClusterIssuer (per Phase 3 self-rolled DB pattern), SAN = DB service
+        FQDN. Paired with postgres:16 StatefulSet (Phase 3, agentstack_db role).
+  - **Not yet done (Phase 2 substeps):**
+    - [ ] Syntax-check + ansible-lint on VM (deferred to VM validation in Phase 4)
+    - [ ] Verify secret generation + OpenBao storage + VSO sync on live VM
+    - [ ] Confirm Keycloak client secret update via REST (verify access token auth
+          flow works)
+    - [ ] Validate fact caching across playbook runs (ansible-inventory check)
+    - [ ] Test teardown.yml cleanup of Phase 2 secrets from OpenBao KV
+  **Next: VM validation of Phase 2 role (full playbook run).**
+
