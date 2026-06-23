@@ -149,6 +149,85 @@ Garrison's KV paths live under `secret/garrison/` — e.g. `agentstack-postgres`
 
 ---
 
+## CLI (agentstack server login)
+
+The `agentstack-cli` pip package is the CLI counterpart to the Helm-deployed server.
+Install it in a dedicated venv on the VM:
+
+```bash
+python3 -m venv /opt/agentstack-cli/.venv
+source /opt/agentstack-cli/.venv/bin/activate
+pip install agentstack-cli
+```
+
+### ⚠️ The CLI targets the SERVER, not the UI host
+
+The browser logs in at the UI host (`https://agentstack.armory.local`). **The CLI does
+not** — that host is a browser-only BFF: its `/api/*` proxy honours the NextAuth *session
+cookie* and ignores Bearer tokens, and it does not serve the OAuth discovery endpoint
+the CLI needs (`/.well-known/oauth-protected-resource`). Pointing the CLI at it fails
+with `JSONDecodeError` / `Unauthorized`.
+
+The CLI uses the **MCP-style OAuth flow** (RFC 9728 discovery → OIDC metadata → Auth
+Code + PKCE in a browser → `http://localhost:9001/callback`) and talks **directly to
+`agentstack-server-svc`**. That requires the server to be exposed on its own ingress
+host (see ticket 001 Phase 4 — `agentstack-api.armory.local`) and a dedicated public
+`agentstack-cli` Keycloak client. (No ROPC / password grant is involved.)
+
+### Prerequisites (internal TLS + local DNS)
+
+Python does not use the OS trust store, and the VM's own `/etc/hosts` may lack the api
+host:
+
+```bash
+# DNS: map the api ingress host to the k3s node loopback (klipper-lb binds here)
+grep -q "agentstack-api.armory.local" /etc/hosts \
+  || echo "127.0.0.1 agentstack-api.armory.local" | sudo tee -a /etc/hosts
+
+# SSL: expose the garrison-installed CA (under /etc/pki/ca-trust/…) to Python
+export SSL_CERT_FILE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+export REQUESTS_CA_BUNDLE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+```
+
+> The CA env vars must be set in every shell session before running `agentstack`
+> commands. Add them to `/etc/profile.d/agentstack-cli.sh` to make them permanent.
+
+### Login
+
+The CLI opens a browser and listens on `127.0.0.1:9001` for the OAuth callback. On the
+headless VM, either tunnel that port to a machine with a browser
+(`vagrant ssh -- -L 9001:localhost:9001`, then open the printed URL on your host), or
+run the CLI from your desktop (it already trusts the CA + resolves the hosts).
+
+```bash
+source /opt/agentstack-cli/.venv/bin/activate
+export SSL_CERT_FILE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+export REQUESTS_CA_BUNDLE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+
+# Confirm discovery works (must return JSON, not HTML)
+curl -s https://agentstack-api.armory.local/.well-known/oauth-protected-resource/ | python3 -m json.tool
+
+agentstack server login https://agentstack-api.armory.local --client-id agentstack-cli
+```
+
+### Deploying reference agents
+
+After login, deploy any agent with a `Dockerfile` at the repo root:
+
+```bash
+agentstack add https://github.com/i-am-bee/agentstack#path=/agents/<agent-name>
+# or with a pinned ref:
+agentstack add https://github.com/i-am-bee/agentstack@v0.7.1#path=/agents/<agent-name>
+
+agentstack list          # confirm registered
+agentstack run <agent>   # test via CLI
+```
+
+See [agentstack reference agents](https://github.com/i-am-bee/agentstack#reference-agents)
+for the list of targets.
+
+---
+
 ## Architecture (what gets provisioned)
 
 `site.yml` runs these roles in order:

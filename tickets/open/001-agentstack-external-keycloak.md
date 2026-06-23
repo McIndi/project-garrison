@@ -37,7 +37,7 @@ server accepts the token (no 401) end-to-end. **Browser E2E validated
 | Run model | **Separate repo, deploy-only, runs inside armory's VM against armory's kubeconfig, as a follow-on after armory's `site.yml`** | DECISION 2026-06-19 / reqs §5 |
 | Implementation vehicle | Ansible, mirroring armory | reqs is written entirely around armory reuse |
 | Realm bootstrap | `KeycloakRealmImport` CR, then REST for clients/scopes | reqs §6 |
-| `directAccessGrantsEnabled` (ROPC) on server client | **start `false`** | reqs §3.2 / §7 — not knowable statically |
+| `directAccessGrantsEnabled` (ROPC) on all clients | **`false` — FINAL** | RESOLVED 2026-06-23: CLI uses Auth Code + PKCE, not ROPC (source-verified). Never needed. |
 | AgentStack Postgres | **`postgresql.enabled: false`; self-roll `pgvector/pgvector:pg16` StatefulSet via armory's pattern, wire via `externalDatabase`** | DECISION 2026-06-20 — avoid Bitnami subchart; pgvector image required by `create-pgvector-extension` init container (see Notes) |
 
 ## Engineering principles (apply from the start — non-negotiable)
@@ -292,11 +292,12 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       decrypted; access token confirmed `aud=['agentstack-server','account']`
       (Phase 1 audience mapper correct). API 200 confirmed after `validateAudience`
       fix (see notes).
-- [ ] Test the beeai CLI login. **This is the only way to learn** whether ROPC is
-      actually needed on `agentstack-server`. If CLI login fails with an auth error,
-      flip `directAccessGrantsEnabled: true` on `agentstack-ui` (not server) and
-      re-test; otherwise leave it off and record the finding here.
-      **See notes 2026-06-23 for expected CLI test procedure.**
+- [~] Test the agentstack CLI login. **ROPC question RESOLVED: not needed** — the CLI
+      uses Auth Code + PKCE (source-verified, see notes 2026-06-23). `directAccessGrantsEnabled`
+      stays `false` on all clients. Found the CLI must hit the SERVER directly (not the
+      UI host). Implemented: a server (API) ingress `api.agentstack.armory.local` →
+      `agentstack-server-svc` + a public PKCE `agentstack-cli` Keycloak client. **Pending
+      a VM bringup + live `agentstack server login` to confirm end-to-end.**
 - [x] `readiness_check`-style assertions wired into the playbook.
 
 ## Notes
@@ -773,31 +774,95 @@ _(running log — decisions, blockers, findings)_
   OpenBao KV via VSO into a `agentstack-admin-credentials` k8s Secret in the
   `agentstack` namespace (same pattern as armory; README has the retrieval command).
 
-- 2026-06-23 — **Phase 4 PARTIAL: browser E2E validated; CLI login pending.**
-  **Validated:** full browser login flow confirmed working (OIDC redirect → Keycloak
-  authenticate → session cookie → UI loads → API requests succeed). JWE session
-  cookie decrypted and confirmed: `accessToken` typ=Bearer, `aud=['agentstack-server',
-  'account']`, iat fresh (post-fix), forwarded by the UI as Authorization Bearer to
-  the API. API returns 200 on `GET /api/v1/providers`.
-  **Remaining Phase 4 gate — beeai CLI login:**
-  The beeai CLI is the only way to determine whether ROPC (`directAccessGrantsEnabled`)
-  is needed. Both clients currently have it disabled (per spec §3.2 / DECISION
-  2026-06-20). Test procedure:
+- 2026-06-23 — **Phase 4: browser E2E VALIDATED.** Full browser login flow confirmed
+  working (OIDC redirect → Keycloak authenticate → session cookie → UI loads → API
+  requests succeed). JWE session cookie decrypted and confirmed: `accessToken`
+  typ=Bearer, `aud=['agentstack-server','account']`, iat fresh (post-fix), forwarded
+  by the UI as Authorization Bearer to the API. API returns 200 on `GET /api/v1/providers`.
+- 2026-06-23 — **Phase 4 CLI login — ROOT-CAUSE ANALYSIS (source-verified against
+  i-am-bee/agentstack@main). This corrects a wrong assumption in the original plan.**
+  The CLI is the `agentstack-cli` pip package (installed in a venv at
+  `/opt/agentstack-cli/.venv` on the VM); command `agentstack server login`.
+  **First-pass blockers (real but minor), both fixed:**
+    1. *DNS* — the VM's own `/etc/hosts` lacked `agentstack.armory.local` (armory/garrison
+       only add hosts to the *host machine*). Added `127.0.0.1 agentstack.armory.local`
+       (klipper-lb binds the ingress LB to node loopback).
+    2. *TLS* — Python ignores the OS trust store; export
+       `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`
+       before running the CLI.
+  **The REAL finding — the CLI cannot use the UI host at all.** After DNS+TLS,
+  `agentstack server login https://agentstack.armory.local` fails with
+  `JSONDecodeError: Expecting value: line 1 column 1`, and `curl .../api/health`
+  returns plain `Unauthorized`. Reading the source explains both:
+    - **The CLI uses the MCP-style OAuth 2.1 discovery flow, NOT the UI's OIDC config.**
+      `commands/server.py` → (1) `GET {server}/.well-known/oauth-protected-resource/`
+      [RFC 9728] → (2) `GET {issuer}/.well-known/openid-configuration` → (3) Dynamic
+      Client Registration [RFC 7591], falling back to a client-ID prompt on failure →
+      (4) **Authorization Code + PKCE** in a browser, redirect `http://localhost:9001/callback`,
+      local listener catches the code, token exchange. `auth_manager.py` /
+      `commands/server.py` confirm: no device flow, **no ROPC**.
+    - **The server serves discovery + API directly; the UI does not proxy it.**
+      `application.py`: `app.include_router(well_known_router, prefix="/.well-known")`
+      and `server_router` under `/api/v1`. The UI proxy (`app/api/[...path]/route.ts`)
+      only forwards `/api/[...path]` AND **overwrites Authorization with the NextAuth
+      session-cookie token** (`ensureToken`), returning `Unauthorized` if no cookie.
+      So `https://agentstack.armory.local` is **browser-only**: it ignores Bearer tokens
+      and never serves `/.well-known/*`. Our single ingress routes *everything* to
+      `agentstack-ui-svc` (the chart's `ingress.yaml` hardcodes that backend), so the
+      CLI's discovery call hit Next.js, got HTML, and JSON-decoding failed.
+  **Therefore: the CLI must target `agentstack-server-svc` directly — which we never
+  exposed.** Browser (cookie auth) and CLI (Bearer auth) are two different front doors.
+  **ROPC QUESTION CLOSED:** ROPC is never needed. CLI = Auth Code + PKCE (same browser
+  flow as UI). Record `directAccessGrantsEnabled: false` as FINAL for both clients.
+  **Remaining Phase 4 work — expose the server + add a CLI client (best practice):**
+    1. **Server ingress on its own host** (proposed `agentstack-api.<domain>`) →
+       `agentstack-server-svc`, TLS from `openbao-pki-external` (SAN = the api host),
+       added to the dual-issuer hostAlias list + VM/host `/etc/hosts`. Do NOT add an
+       `/api` path on the UI host — nginx would route the browser's `/api/v1/*` to the
+       server directly and break cookie auth.
+    2. **Pre-create a public `agentstack-cli` Keycloak client** in `clients.yml`:
+       `standard_flow_enabled: true`, public (PKCE/S256 required), redirect URI
+       `http://localhost:9001/callback`, default scopes incl. `basic` (for `sub`) +
+       `acr`/`email`/`profile`/`roles`/`web-origins`. Do NOT enable Keycloak anonymous
+       Dynamic Client Registration (security); the CLI gracefully prompts for a client
+       ID when DCR fails — pass `--client-id agentstack-cli`.
+    3. **Headless callback handling**: the CLI opens a browser + listens on
+       `127.0.0.1:9001`. On the headless VM neither happens locally. Either
+       `vagrant ssh -- -L 9001:localhost:9001` and open the printed URL in the host
+       browser (callback tunnels back to the VM listener), or run the CLI from the
+       desktop (already trusts the CA + resolves the hosts from browser E2E).
+  **CLI login command (once the server ingress + client exist):**
+  ```bash
+  source /opt/agentstack-cli/.venv/bin/activate
+  export SSL_CERT_FILE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+  export REQUESTS_CA_BUNDLE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+  agentstack server login https://agentstack-api.armory.local --client-id agentstack-cli
   ```
-  # On the VM (pip-installed or via the agentstack project):
-  pip install beeai          # or however the CLI ships with 0.7.1
-  beeai connect https://agentstack.armory.local
-  # -- or --
-  beeai login https://agentstack.armory.local
-  ```
-  Expected outcomes:
-  - **Device flow / browser redirect** → no ROPC needed; record `directAccessGrantsEnabled`
-    stays `false` for both clients. Close this item.
-  - **Prompts username + password (ROPC)** → enable on `agentstack-ui` client
-    (`direct_access_grants_enabled: true` in `clients.yml`), re-test, record finding.
-  - **CLI doesn't exist / ships differently in 0.7.1** → document the gap; may be
-    a post-0.7.x feature.
-  Note: do NOT enable ROPC on `agentstack-server` for CLI use — the server client is
-  M2M only. ROPC for human CLI login belongs on `agentstack-ui` (confidential, standard
-  flow enabled = accepts password grant in addition to code flow).
+  **Next after CLI login:** deploy a reference agent —
+  `agentstack add <github-url>[@ref][#path=/subdir]`. Targets:
+  https://github.com/i-am-bee/agentstack#reference-agents.
+- 2026-06-23 — **CLI enablement IMPLEMENTED (pending VM validation).** Two additive
+  changes, neither touches the working browser path:
+    1. **Server (API) ingress** — new `agentstack/tasks/server_ingress.yml` (included
+       in `tasks/main.yml` after `ui_ingress`): cert-manager Certificate (SAN
+       `api.agentstack.armory.local`, issuer `openbao-pki-external`) + a standalone
+       Ingress routing host `api.agentstack.armory.local` → `agentstack-server-svc:8333`.
+       New defaults in `agentstack/defaults/main.yml`: `agentstack_api_host`,
+       `agentstack_server_service_name/_port`, `agentstack_api_ingress_tls_secret_name/_cert_issuer`.
+       Deliberately a SEPARATE host (not an `/api` path on the UI host) so nginx can't
+       route the browser's `/api/v1/*` to the server and break cookie auth.
+    2. **`agentstack-cli` Keycloak client** — new block in
+       `agentstack_keycloak/tasks/clients.yml` + defaults: PUBLIC client, PKCE/S256
+       enforced (`attributes.pkce.code.challenge.method=S256`), standard flow,
+       redirect `http://localhost:9001/callback` (+127.0.0.1 variant), default scopes
+       incl. `basic`. No ROPC, no service account, no secret.
+  Teardown already covers both (namespace delete drops the API ingress+cert; realm
+  delete drops the CLI client) — no teardown changes needed.
+  **VM validation steps:** `ansible-playbook playbooks/site.yml`, then add
+  `api.agentstack.armory.local` to VM (and host) `/etc/hosts`, then:
+  `curl -s https://api.agentstack.armory.local/.well-known/oauth-protected-resource/ | python3 -m json.tool`
+  must return JSON (authorization_servers = the Keycloak issuer); then
+  `agentstack server login https://api.agentstack.armory.local --client-id agentstack-cli`
+  (tunnel port 9001 to a browser host, or run the CLI from the desktop). On success,
+  flip the Phase 4 CLI item to [x] and close the ticket.
 

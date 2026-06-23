@@ -97,3 +97,46 @@
 - name: Report agentstack-server client provisioning outcome
   ansible.builtin.debug:
     msg: "agentstack-server client {{ 'created' if server_client_result.changed else 'already up-to-date' }}"
+
+# ── agentstack-cli ──────────────────────────────────────────────────────────────
+# Public PKCE client for `agentstack server login`. The CLI uses Authorization
+# Code + PKCE (NOT ROPC) with a fixed loopback redirect (127.0.0.1:9001) and talks
+# directly to the server's API ingress. Public client = no secret to manage;
+# pkce.code.challenge.method=S256 enforces PKCE. Keycloak anonymous Dynamic Client
+# Registration stays disabled — the CLI falls back to this client via
+# `--client-id agentstack-cli`. See ticket 001 Phase 4.
+
+- name: Create / update agentstack-cli OIDC client
+  community.general.keycloak_client:
+    auth_keycloak_url: "{{ keycloak_addr }}"
+    auth_realm: "{{ keycloak_auth_realm }}"
+    auth_username: "{{ keycloak_admin_user }}"
+    auth_password: "{{ keycloak_admin_password }}"
+    validate_certs: "{{ keycloak_tls_verify }}"
+    realm: "{{ agentstack_keycloak_realm }}"
+    client_id: "{{ agentstack_cli_client_id }}"
+    name: "AgentStack CLI"
+    description: "Public PKCE client for the agentstack CLI (Auth Code + PKCE, loopback redirect)"
+    enabled: true
+    protocol: openid-connect
+    # Public client (no secret) — the secure pattern for native/CLI apps.
+    public_client: true
+    # Authorization code flow for browser-based login.
+    standard_flow_enabled: true
+    implicit_flow_enabled: false
+    # No ROPC, no service account — Auth Code + PKCE only.
+    direct_access_grants_enabled: false
+    service_accounts_enabled: false
+    # Fixed loopback redirect the CLI listens on; no web origins needed (native app).
+    redirect_uris: "{{ agentstack_cli_redirect_uris }}"
+    # Enforce PKCE (S256) — required for a public client to be secure.
+    attributes:
+      pkce.code.challenge.method: "S256"
+    default_client_scopes: "{{ agentstack_cli_default_client_scopes }}"
+    state: present
+  register: cli_client_result
+  no_log: "{{ not (garrison_log_nolog | default(false) | bool) }}"
+
+- name: Report agentstack-cli client provisioning outcome
+  ansible.builtin.debug:
+    msg: "agentstack-cli client {{ 'created' if cli_client_result.changed else 'already up-to-date' }}"

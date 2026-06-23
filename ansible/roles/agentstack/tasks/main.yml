@@ -22,6 +22,9 @@
     - name: Include ui_ingress subtask
       ansible.builtin.include_tasks: ui_ingress.yml
 
+    - name: Include server_ingress subtask (API host for the CLI)
+      ansible.builtin.include_tasks: server_ingress.yml
+
     - name: Include hostaliases_patch subtask
       ansible.builtin.include_tasks: hostaliases_patch.yml
 

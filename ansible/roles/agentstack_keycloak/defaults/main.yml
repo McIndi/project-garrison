@@ -18,6 +18,31 @@ keycloak_auth_realm: master
 # ── Client IDs ────────────────────────────────────────────────────────────────
 agentstack_ui_client_id: agentstack-ui
 agentstack_server_client_id: agentstack-server
+# Public PKCE client for the agentstack CLI (`agentstack server login`). The CLI
+# uses Authorization Code + PKCE with a fixed loopback redirect and talks directly
+# to the server's API ingress. It is NOT the UI client. See ticket 001 Phase 4.
+agentstack_cli_client_id: agentstack-cli
+
+# ── CLI client (public, PKCE, loopback redirect) ───────────────────────────────
+# The agentstack CLI binds a local listener on 127.0.0.1:9001 and uses this exact
+# redirect URI. It is a PUBLIC client (no secret) enforcing PKCE/S256 — the secure
+# pattern for native/CLI apps. Keycloak anonymous Dynamic Client Registration is
+# left DISABLED (security); the CLI falls back to this pre-created client when DCR
+# fails (pass `--client-id agentstack-cli`).
+agentstack_cli_redirect_uris:
+  - "http://localhost:9001/callback"
+  - "http://127.0.0.1:9001/callback"
+# Default scopes: 'basic' is REQUIRED (carries the `sub` claim in Keycloak 24+, as
+# for the UI client). No audience scope needed — the server runs with
+# validateAudience=false — but it is harmless to include for parity/future use.
+agentstack_cli_default_client_scopes:
+  - basic
+  - acr
+  - email
+  - profile
+  - roles
+  - web-origins
+  - "{{ agentstack_audience_scope_name }}"
 
 # ── UI redirect URIs / web origins (derived from agentstack_ui_host in group_vars)
 # Use a wildcard under the host for development; tighten to specific callback

@@ -1,0 +1,78 @@
+---
+# Create the server (API) ingress + TLS certificate for the agentstack CLI.
+#
+# The chart's own ingress (helm/templates/ingress.yaml) hardcodes the backend to
+# agentstack-ui-svc for every path, so it cannot expose the server. We create a
+# SEPARATE Ingress on its own host (agentstack_api_host) routing straight to
+# agentstack-server-svc, with TLS from the same public issuer as the UI. This is
+# what the CLI's OAuth discovery (/.well-known/oauth-protected-resource) and
+# Bearer-authenticated /api/v1 calls need. See ticket 001 Phase 4.
+
+- name: Deploy server (API) ingress TLS and ingress resource
+  block:
+    - name: Create cert-manager Certificate for server (API) ingress (pki-external)
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: cert-manager.io/v1
+          kind: Certificate
+          metadata:
+            name: "{{ agentstack_api_ingress_tls_secret_name }}"
+            namespace: "{{ agentstack_namespace }}"
+          spec:
+            secretName: "{{ agentstack_api_ingress_tls_secret_name }}"
+            issuerRef:
+              name: "{{ agentstack_api_ingress_cert_issuer }}"
+              kind: ClusterIssuer
+            commonName: "{{ agentstack_api_host }}"
+            dnsNames:
+              - "{{ agentstack_api_host }}"
+
+    - name: Wait for server (API) ingress certificate to be issued
+      kubernetes.core.k8s_info:
+        kind: Certificate
+        name: "{{ agentstack_api_ingress_tls_secret_name }}"
+        namespace: "{{ agentstack_namespace }}"
+      register: api_cert
+      until:
+        - api_cert.resources is defined
+        - api_cert.resources | length > 0
+        - api_cert.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | list | length > 0
+        - (api_cert.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | list)[0] == 'True'
+      retries: 30
+      delay: 5
+      changed_when: false
+
+    - name: Create server (API) Ingress routing to agentstack-server-svc
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: "{{ agentstack_release_name }}-api"
+            namespace: "{{ agentstack_namespace }}"
+          spec:
+            ingressClassName: nginx
+            tls:
+              - secretName: "{{ agentstack_api_ingress_tls_secret_name }}"
+                hosts:
+                  - "{{ agentstack_api_host }}"
+            rules:
+              - host: "{{ agentstack_api_host }}"
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: "{{ agentstack_server_service_name }}"
+                          port:
+                            number: "{{ agentstack_server_service_port | int }}"
+
+    - name: Log server (API) ingress deployment
+      ansible.builtin.debug:
+        msg: >-
+          AgentStack server (API) ingress deployed for {{ agentstack_api_host }}
+          → {{ agentstack_server_service_name }}:{{ agentstack_server_service_port }}
+          (used by the agentstack CLI)

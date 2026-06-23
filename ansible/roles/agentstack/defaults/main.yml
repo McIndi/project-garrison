@@ -145,6 +145,23 @@ agentstack_ui_ingress_cert_issuer: "openbao-pki-external"
 agentstack_ingress_proxy_buffer_size: "64k"
 agentstack_ingress_proxy_buffers_number: "8"
 
+# ── Server (API) Ingress — for the agentstack CLI ──────────────────────────────
+# The CLI (agentstack-cli) does NOT use the UI host: that host is a browser-only
+# BFF whose /api proxy honours the NextAuth session cookie and ignores Bearer
+# tokens, and it does not serve the OAuth discovery endpoint the CLI needs
+# (/.well-known/oauth-protected-resource). The CLI talks DIRECTLY to the server
+# (agentstack-server-svc) using the MCP-style OAuth flow (RFC 9728 discovery →
+# OIDC metadata → Auth Code + PKCE) and a Bearer token the server validates
+# itself. So the server gets its OWN ingress host, separate from the UI.
+# We must NOT add an /api path on the UI host — nginx would route the browser's
+# /api/v1/* straight to the server and break cookie auth. See ticket 001 Phase 4.
+agentstack_api_host: "api.{{ agentstack_ui_host }}"
+agentstack_server_service_name: "agentstack-server-svc"
+# Chart service.port (helm values.yaml service.port: 8333).
+agentstack_server_service_port: 8333
+agentstack_api_ingress_tls_secret_name: "agentstack-api-tls"
+agentstack_api_ingress_cert_issuer: "{{ agentstack_ui_ingress_cert_issuer }}"
+
 # ── Dual-issuer patch: hostAlias + private-CA trust (armory's proven pattern) ──────
 # In external-OIDC mode the UI + server pods must reach the PUBLIC issuer
 # (https://armory.local/realms/agentstack) which only resolves at the ingress and
