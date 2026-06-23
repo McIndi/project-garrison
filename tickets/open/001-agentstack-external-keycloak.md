@@ -865,4 +865,22 @@ _(running log — decisions, blockers, findings)_
   `agentstack server login https://api.agentstack.armory.local --client-id agentstack-cli`
   (tunnel port 9001 to a browser host, or run the CLI from the desktop). On success,
   flip the Phase 4 CLI item to [x] and close the ticket.
+- 2026-06-23 — **Bug #14 (Phase 4): `agentstack add` fails with public-TLS
+  `CERTIFICATE_VERIFY_FAILED` (e.g. github.com).** After CLI login worked, building an
+  agent failed: the server resolves the GitHub ref and dies with
+  `ConnectError([SSL: CERTIFICATE_VERIFY_FAILED] ... unable to get local issuer
+  certificate)`. Root cause: bug #10's fix set `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE` on
+  the server to `/etc/agentstack-ca/ca.crt`, which is the `agentstack-public-ca`
+  trust-manager Bundle — and that bundle sourced ONLY the private Armory Root CA. For
+  Python those env vars REPLACE the system trust store (unlike Node's additive
+  `NODE_EXTRA_CA_CERTS`), so the server could verify the private Keycloak issuer but NO
+  public endpoint (github, model providers, …). Fix: make the bundle COMBINED — added
+  `- useDefaultCAs: true` as the first source in `bundle_pki_ext.yaml.j2` (trust-manager
+  ships the Debian/Mozilla default package; verified live:
+  `--default-package-location=/packages/cert-manager-package-debian.json` +
+  `trust-pkg-debian-trixie` sidecar). Resulting `ca.crt` = public roots + Armory Root CA,
+  so both public and private TLS verify. Apply: re-run `--tags agentstack_secrets`, then
+  `kubectl rollout restart deploy/agentstack-server -n agentstack` (Python reads the CA
+  file at process start). Verify: the `agentstack-public-ca` secret's `ca.crt` jumps from
+  1 cert to ~130+.
 

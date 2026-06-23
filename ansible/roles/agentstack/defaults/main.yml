@@ -116,6 +116,19 @@ agentstack_helm_values:
     apiUrl: "https://{{ agentstack_ui_host }}"
   # Trust proxy headers (X-Forwarded-* from nginx-ingress) — top-level key
   trustProxyHeaders: true
+  # Health-probe timeouts. The chart's livenessProbe/readinessProbe set
+  # failureThreshold + periodSeconds but OMIT timeoutSeconds, so k8s applies its
+  # 1s default. On this single-node Vagrant VM the /healthcheck endpoint
+  # intermittently takes >1s (the async event loop briefly blocks when the
+  # every-30s agent-registry sync cron coincides with a probe), so liveness fails
+  # 5× and the kubelet SIGKILLs the container (exit 137) → during the restart the
+  # Service has no ready endpoint → nginx 503. Helm deep-merges these onto the
+  # chart probe defaults (template uses `toYaml .Values.{liveness,readiness}Probe`),
+  # so we only need to add timeoutSeconds (httpGet/period/threshold are preserved).
+  livenessProbe:
+    timeoutSeconds: 5
+  readinessProbe:
+    timeoutSeconds: 5
   # Ingress configuration
   ingress:
     enabled: true
