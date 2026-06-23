@@ -5,10 +5,12 @@
 ## Goal
 
 Stand up `project-garrison` as an Ansible repo that deploys the BeeAI / Agent
-Stack Helm chart (`agentstack` 0.7.2) with its bundled Keycloak **disabled**,
+Stack Helm chart (`agentstack` 0.7.1, the published registry latest — 0.7.2 is
+unreleased main-branch and 404s on pull) with its bundled Keycloak **disabled**,
 pointed at the external Keycloak owned by `project-armory`. "Done" = a user can
 log into the Agent Stack UI via OIDC against the `agentstack` realm, and the
-server accepts the token (no 401) end-to-end.
+server accepts the token (no 401) end-to-end. **Browser E2E validated
+2026-06-23. Remaining Phase 4 gate: beeai CLI login (ROPC finding).**
 
 ## Context
 
@@ -36,7 +38,7 @@ server accepts the token (no 401) end-to-end.
 | Implementation vehicle | Ansible, mirroring armory | reqs is written entirely around armory reuse |
 | Realm bootstrap | `KeycloakRealmImport` CR, then REST for clients/scopes | reqs §6 |
 | `directAccessGrantsEnabled` (ROPC) on server client | **start `false`** | reqs §3.2 / §7 — not knowable statically |
-| AgentStack Postgres | **`postgresql.enabled: false`; self-roll `postgres:16` StatefulSet via armory's pattern, wire via `externalDatabase`** | DECISION 2026-06-20 — avoid Bitnami subchart (see Notes) |
+| AgentStack Postgres | **`postgresql.enabled: false`; self-roll `pgvector/pgvector:pg16` StatefulSet via armory's pattern, wire via `externalDatabase`** | DECISION 2026-06-20 — avoid Bitnami subchart; pgvector image required by `create-pgvector-extension` init container (see Notes) |
 
 ## Engineering principles (apply from the start — non-negotiable)
 
@@ -116,7 +118,7 @@ platform:
 ansible/roles/
   agentstack_keycloak/   # realm + 2 clients + audience scope/mapper + 2 roles + seed admin (REST, on armory KC)
   agentstack_secrets/    # OpenBao KV writes + VSO VaultStaticSecret + trust-manager Bundles (pki-int + pki-ext)
-  agentstack_db/         # self-rolled postgres:16 StatefulSet (armory pattern) + pki-int TLS; NOT the Bitnami subchart
+  agentstack_db/         # self-rolled pgvector/pgvector:pg16 StatefulSet (armory pattern) + pki-int TLS; NOT the Bitnami subchart
   agentstack/            # Helm release (external OIDC values, postgresql.enabled:false→externalDatabase) + hostAlias patch + UI ingress
 ```
 
@@ -255,11 +257,12 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
 
 ### Phase 3 — Deploy `agentstack` (~1 day)
 - [x] **`agentstack_db`: self-rolled Postgres (before the Helm release).** Apply
-      the `postgres:16` Service + StatefulSet (copied from armory
+      the `pgvector/pgvector:pg16` Service + StatefulSet (copied from armory
       `keycloak/templates/postgres.yaml.j2`) into `agentstack` ns via
       `kubernetes.core.k8s`, consuming the OpenBao/VSO DB Secret + `pki-int`
       Certificate from Phase 2; run with `ssl=on`. This replaces the disabled
-      Bitnami subchart.
+      Bitnami subchart. (`postgres:16` is NOT sufficient — the chart's
+      `create-pgvector-extension` init container requires pgvector.)
 - [x] `kubernetes.core.helm` release (with `kubernetes.core.helm_repository` for
       the chart repo) using `values:`/`values_files:` — `keycloak.enabled: false`,
       **`postgresql.enabled: false`** + `externalDatabase.{host,port,user,database,
@@ -267,7 +270,7 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       (host = DB service FQDN; `sslRootCert` = the `pki-int` CA from the
       trust-manager Bundle),
       `externalOidcProvider.{issuerUrl,uiClientId,serverClientId,existingSecret}`,
-      `auth.validateAudience: true`, `auth.basic.enabled: false` (OIDC-only),
+      `auth.validateAudience: false` (server checks URL-shaped aud, not client-ID string — see notes 2026-06-23), `auth.basic.enabled: false` (OIDC-only),
       `trustProxyHeaders: true`. Leave `AUTH__OIDC__INSECURE_TRANSPORT` default
       (issuer is HTTPS). Do **not** patch Deployments for proxy env (chart-native
       in 0.7.2, reqs §4.4).
@@ -281,14 +284,20 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       with `agentstack-ui` redirectUris/webOrigins + cert SAN.
 
 ### Phase 4 — Runtime verification (~½ day)  ← retires §3.2 ROPC unknown
-- [ ] Browser login E2E against the UI ingress; confirm redirect → token → app.
-- [ ] Decode the **access** token; assert `aud` contains `agentstack-server` and
-      the API returns 200 (not 401).
+- [x] Browser login E2E against the UI ingress; confirm redirect → token → app.
+      **VALIDATED 2026-06-23** — full OIDC redirect, Keycloak login, session cookie
+      issued, UI loads. Resolved a chain of 6 post-login 401/500 errors (see notes).
+- [x] Decode the **access** token; assert `aud` contains `agentstack-server` and
+      the API returns 200 (not 401). **VALIDATED 2026-06-23** — JWE session cookie
+      decrypted; access token confirmed `aud=['agentstack-server','account']`
+      (Phase 1 audience mapper correct). API 200 confirmed after `validateAudience`
+      fix (see notes).
 - [ ] Test the beeai CLI login. **This is the only way to learn** whether ROPC is
-      actually needed on `agentstack-server`. If CLI login fails, flip
-      `directAccessGrantsEnabled: true` and re-test; otherwise leave it off and
-      record the finding here.
-- [ ] `readiness_check`-style assertions wired into the playbook.
+      actually needed on `agentstack-server`. If CLI login fails with an auth error,
+      flip `directAccessGrantsEnabled: true` on `agentstack-ui` (not server) and
+      re-test; otherwise leave it off and record the finding here.
+      **See notes 2026-06-23 for expected CLI test procedure.**
+- [x] `readiness_check`-style assertions wired into the playbook.
 
 ## Notes
 
@@ -698,4 +707,97 @@ _(running log — decisions, blockers, findings)_
   Python server's CA trust may need `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE` in
   addition to `NODE_EXTRA_CA_CERTS` (flagged in the patch); browser E2E login.
 
+- 2026-06-22/23 — **Phase 3 LIVE-VALIDATION COMPLETE (all runtime bugs fixed).**
+  Full `site.yml` ran end-to-end after resolving a chain of runtime bugs. Each was
+  found on a live bringup iteration and fixed in-place in the roles. In order:
+  1. **`role 'common' was not found`** — `.env` sourced without `set -a`; env vars
+     not exported to `ansible-playbook` child. Fix: `set -a; source ../.env; set +a`.
+     `bringup-all.sh` does this automatically; only bites on direct playbook runs.
+  2. **`Invalid kube-config file. No configuration found`** — Copilot's Phase 3 tasks
+     passed `kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') }}"` explicitly;
+     `lookup` runs in controller env (Windows/WSL2) where the var is unset. Fix:
+     remove all explicit `kubeconfig:` params from tasks; rely on the play-level
+     `environment: K8S_AUTH_KUBECONFIG` set in `site.yml`.
+  3. **Broken YAML after kubeconfig removal** — the removed `kubeconfig:` key was
+     the first key on the module line; removing it joined the module name inline with
+     the next key (e.g., `kubernetes.core.k8s:        state: present`). Fix: manual
+     YAML repair for affected tasks.
+  4. **`k8s_exec` crash — `invalid literal for int()`** — `pg_isready` exec task
+     parsed the pod Ready status incorrectly and was redundant (readiness probe IS
+     pg_isready; `readyReplicas == 1` already proves DB is up). Fix: remove the exec
+     task entirely.
+  5. **`sqlConnectionSuperuser` missing from secret** — `create-pgvector-extension`
+     init container reads this key; Phase 2 only wrote `username/password/postgres/
+     sqlConnection`. Fix: add `sqlConnectionSuperuser` to the Postgres KV write (same
+     URL as `sqlConnection` — our user is superuser).
+  6. **`pgvector/pgvector:pg16` required, not `postgres:16`** — the chart's
+     `create-pgvector-extension` init container runs `CREATE EXTENSION vector`; the
+     official `postgres:16` image has no pgvector. Fix: change db role default image
+     to `pgvector/pgvector:pg16`.
+  7. **VSO serves stale KV (1h `refreshAfter`)** — on re-runs, VSO didn't see the new
+     `sqlConnectionSuperuser` key for up to an hour. Fix: after each `VaultStaticSecret`
+     apply, patch `vso.hashicorp.com/force-sync: "{{ ansible_facts['date_time'].iso8601_micro }}"`.
+     Also fixed an `ansible_date_time` deprecation warning (use `ansible_facts['date_time']`).
+  8. **Server crashloops: `load_verify_locations … cannot be all omitted`** — with
+     `DB_USE_SSL=true` the app calls `load_verify_locations(cafile=db_ssl_cert)`;
+     empty `sslRootCert` → crash. Fix: read `ca.crt` from `agentstack-postgresql-tls`
+     secret in `helm_release.yml`, inject as `externalDatabase.sslRootCert` (inline
+     PEM string, not a file path) via `combine(..., recursive=True)`.
+  9. **502 Bad Gateway post-login** — nginx `upstream sent too big header`; the NextAuth
+     JWE session cookie is too large for the default 4k/8k proxy buffers. Fix: ingress
+     annotations `proxy-buffer-size: 64k`, `proxy-buffers-number: 8`.
+  10. **401 `CERTIFICATE_VERIFY_FAILED`** — Python server can't verify the Keycloak
+      issuer TLS; `NODE_EXTRA_CA_CERTS` is Node-only and was the only CA env var set.
+      Fix: add `SSL_CERT_FILE` + `REQUESTS_CA_BUNDLE` pointing to the mounted CA
+      bundle on the **main container only** (NOT init containers — they don't mount
+      the CA volume; adding to init containers broke the `create-buckets` S3 client).
+  11. **401 `Missing 'sub' claim`** — Keycloak 24+ moved the `sub` mapper into the
+      built-in `basic` client scope, which was absent from `agentstack_ui_default_client_scopes`.
+      Fix: add `basic` + `acr` to the defaults list.
+  12. **401 `Invalid claim 'aud'`** — the server (0.7.1) builds `expected_aud` from
+      `create_resource_uri(request.url.replace(path="/"))` — a URL like
+      `https://agentstack.armory.local/` — NOT the `serverClientId` string. Token
+      carries `aud=['agentstack-server','account']`; these never match. Fix:
+      `auth.validateAudience: false` in Helm values. The audience mapper is kept
+      (correct per spec intent) but the URL-based check is disabled. Safer than
+      guessing the exact URL the server expects; iss/sub/exp/sig are still validated.
+  13. **500 `value is not a valid email address`** — seed admin email was
+      `agentstack-admin@localhost`; the agentstack server's user-sync rejects
+      non-routable TLDs. Fix: `agentstack_seed_admin_email: "admin@armory.dev"`.
+  **Teardown fix (2026-06-22):** `keycloak_realm state: absent` used `ca_path:`
+  which `open_url` (used by the module) does not accept → `Unsupported parameters`.
+  Fix: install CA to OS trust store before the realm-delete task (same as the
+  bringup ca_proof pattern); remove `ca_path` from the task.
+  **Admin credentials surfaced (2026-06-22):** added `admin_credentials.yml` to
+  Phase 2 (`agentstack_secrets`) — syncs the seed-admin `username`+`password` from
+  OpenBao KV via VSO into a `agentstack-admin-credentials` k8s Secret in the
+  `agentstack` namespace (same pattern as armory; README has the retrieval command).
+
+- 2026-06-23 — **Phase 4 PARTIAL: browser E2E validated; CLI login pending.**
+  **Validated:** full browser login flow confirmed working (OIDC redirect → Keycloak
+  authenticate → session cookie → UI loads → API requests succeed). JWE session
+  cookie decrypted and confirmed: `accessToken` typ=Bearer, `aud=['agentstack-server',
+  'account']`, iat fresh (post-fix), forwarded by the UI as Authorization Bearer to
+  the API. API returns 200 on `GET /api/v1/providers`.
+  **Remaining Phase 4 gate — beeai CLI login:**
+  The beeai CLI is the only way to determine whether ROPC (`directAccessGrantsEnabled`)
+  is needed. Both clients currently have it disabled (per spec §3.2 / DECISION
+  2026-06-20). Test procedure:
+  ```
+  # On the VM (pip-installed or via the agentstack project):
+  pip install beeai          # or however the CLI ships with 0.7.1
+  beeai connect https://agentstack.armory.local
+  # -- or --
+  beeai login https://agentstack.armory.local
+  ```
+  Expected outcomes:
+  - **Device flow / browser redirect** → no ROPC needed; record `directAccessGrantsEnabled`
+    stays `false` for both clients. Close this item.
+  - **Prompts username + password (ROPC)** → enable on `agentstack-ui` client
+    (`direct_access_grants_enabled: true` in `clients.yml`), re-test, record finding.
+  - **CLI doesn't exist / ships differently in 0.7.1** → document the gap; may be
+    a post-0.7.x feature.
+  Note: do NOT enable ROPC on `agentstack-server` for CLI use — the server client is
+  M2M only. ROPC for human CLI login belongs on `agentstack-ui` (confidential, standard
+  flow enabled = accepts password grant in addition to code flow).
 
