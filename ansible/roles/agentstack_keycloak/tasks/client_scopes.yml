@@ -8,11 +8,14 @@
 # This is required for the agentstack server to accept tokens from the UI
 # (validates aud == agentstack-server).
 #
-# CRITICAL — literal client ID, NOT a URL (ticket §3.4 / §audience bug):
+# NOTE on audience validation (ticket §3.4 / §audience bug):
 #   The mapper uses `included.custom.audience: agentstack-server` (the client ID
-#   string), not any URL form. The chart's bundled Keycloak used a URL, which
-#   caused 401s because the server validates against the literal client ID.
-#   This audience scope is the fix.
+#   string). The server (0.7.1) actually validates aud against a URL built from
+#   create_resource_uri(request.url) — not the client ID string — so the token's
+#   aud=['agentstack-server','account'] will never match. For this reason
+#   auth.validateAudience is set to false in the Helm values (agentstack role
+#   defaults). This scope is kept so the aud claim is present in the token for
+#   any future upgrade that may restore literal-client-ID checking.
 #
 # The scope is assigned to agentstack-ui as a DEFAULT scope in clients.yml
 # (via the `default_client_scopes` list on keycloak_client). Any token issued
@@ -45,7 +48,10 @@
           # IMPORTANT: literal client ID string, NOT a URL. See ticket §3.4.
           included.custom.audience: "{{ agentstack_server_client_id }}"
           access.token.claim: "true"
-          id.token.claim: "false"
+          # Also emit into the ID token: the agentstack UI forwards the ID token
+          # (typ=ID, aud=agentstack-ui) to the server, so the audience must be in
+          # the ID token too or the server rejects with invalid_claim 'aud' (401).
+          id.token.claim: "true"
     state: present
   register: audience_scope_result
   no_log: "{{ not (garrison_log_nolog | default(false) | bool) }}"

@@ -69,10 +69,19 @@
                         mountPath: "{{ agentstack_oidc_ca_mount_path }}"
                         readOnly: true
                     env:
-                      # Additive (does not replace the system bundle) — for the
-                      # Node/Next.js UI. The Python server may instead need
-                      # SSL_CERT_FILE/REQUESTS_CA_BUNDLE; confirm at VM validation.
+                      # The mounted bundle (agentstack-public-ca) contains the
+                      # default/public CAs AND the Armory Root CA, so pointing at
+                      # it does not break outbound TLS to public endpoints.
+                      # NODE_EXTRA_CA_CERTS → the Node/Next.js UI; SSL_CERT_FILE +
+                      # REQUESTS_CA_BUNDLE → the Python server (needed to fetch the
+                      # OIDC issuer's JWKS over HTTPS, else token validation 401s).
+                      # All three are set on both pods; each runtime ignores the
+                      # ones that don't apply to it.
                       - name: NODE_EXTRA_CA_CERTS
+                        value: "{{ agentstack_oidc_ca_file_path }}"
+                      - name: SSL_CERT_FILE
+                        value: "{{ agentstack_oidc_ca_file_path }}"
+                      - name: REQUESTS_CA_BUNDLE
                         value: "{{ agentstack_oidc_ca_file_path }}"
       loop:
         - { deployment: "{{ agentstack_ui_deployment_name }}", container: "{{ agentstack_ui_container_name }}" }

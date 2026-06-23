@@ -95,14 +95,20 @@ agentstack_helm_values:
     uiClientId: "{{ agentstack_ui_client_id }}"
     serverClientId: "{{ agentstack_server_client_id }}"
     existingSecret: "{{ agentstack_oidc_client_secrets_secret_name }}"
-  # Authentication: OIDC-only (basic disabled), audience validation on.
+  # Authentication: OIDC-only (basic disabled), audience validation OFF.
+  # validateAudience=false: the server (0.7.1) builds expected_aud from
+  # create_resource_uri(request.url.replace(path="/")) — a URL like
+  # "https://agentstack.armory.local/" — but the Keycloak token carries
+  # aud=['agentstack-server','account']. These never match, so every request
+  # 401s with "Invalid claim 'aud'". Disabling the check is safe here because
+  # iss/sub/exp/sig are all still validated by the OIDC middleware.
   # `encryptionKey` (top-level) and `auth.nextauthSecret` are REQUIRED, have no
   # existingSecret hook, and are injected at deploy time from the Phase 2 facts
   # (agentstack_helm_encryption_key / agentstack_helm_nextauth_secret) in
   # helm_release.yml — NOT here, so they never sit in defaults.
   auth:
     enabled: true
-    validateAudience: true
+    validateAudience: false
     basic:
       enabled: false
     # Public URLs (chart default is localhost — must point at the real ingress host)
@@ -114,6 +120,13 @@ agentstack_helm_values:
   ingress:
     enabled: true
     className: nginx
+    # Enlarge nginx's proxy response buffers: after OIDC login the UI returns a
+    # large encrypted NextAuth session cookie in a Set-Cookie header that exceeds
+    # the default 4k/8k buffer, causing "upstream sent too big header" → 502 on
+    # the post-login GET /. (Same tuning armory's beeai role applies.)
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-buffer-size: "{{ agentstack_ingress_proxy_buffer_size }}"
+      nginx.ingress.kubernetes.io/proxy-buffers-number: "{{ agentstack_ingress_proxy_buffers_number }}"
     hosts:
       - host: "{{ agentstack_ui_host }}"
         paths:
@@ -128,6 +141,9 @@ agentstack_helm_values:
 # cert-manager will create this Secret (Certificate resource from Phase 3)
 agentstack_ui_ingress_tls_secret_name: "agentstack-ui-tls"
 agentstack_ui_ingress_cert_issuer: "openbao-pki-external"
+# nginx proxy buffer sizing for the large post-login NextAuth Set-Cookie header.
+agentstack_ingress_proxy_buffer_size: "64k"
+agentstack_ingress_proxy_buffers_number: "8"
 
 # ── Dual-issuer patch: hostAlias + private-CA trust (armory's proven pattern) ──────
 # In external-OIDC mode the UI + server pods must reach the PUBLIC issuer

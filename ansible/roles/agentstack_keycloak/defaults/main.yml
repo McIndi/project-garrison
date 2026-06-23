@@ -33,6 +33,12 @@ agentstack_ui_web_origins:
 # It includes the standard Keycloak scopes required for OIDC login + the custom
 # audience scope added in client_scopes.yml. Keep in sync if you add scopes.
 agentstack_ui_default_client_scopes:
+  # 'basic' is REQUIRED: in Keycloak 24+ the sub (and auth_time) claim moved into
+  # the built-in 'basic' client scope. Without it the access token has no `sub`
+  # and the agentstack server rejects every request with
+  # "Token validation failed: missing_claim: Missing 'sub' claim" (401).
+  - basic
+  - acr
   - email
   - profile
   - roles
@@ -49,7 +55,7 @@ agentstack_realm_roles:
 
 # ── Seed admin user ────────────────────────────────────────────────────────────
 agentstack_seed_admin_username: agentstack-admin
-agentstack_seed_admin_email: "agentstack-admin@localhost"
+agentstack_seed_admin_email: "admin@armory.dev"
 agentstack_seed_admin_first_name: "AgentStack"
 agentstack_seed_admin_last_name: "Admin"
 # The role assigned to the seed admin at the realm level.
