@@ -27,6 +27,12 @@
       tags:
         - agentstack_secrets
 
-    # Phase 3 role (coming later):
-    # - agentstack_db
-    # - agentstack
+    - role: agentstack_db
+      tags:
+        - agentstack_db
+        - agentstack_deploy
+
+    - role: agentstack
+      tags:
+        - agentstack
+        - agentstack_deploy

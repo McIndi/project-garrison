@@ -52,12 +52,16 @@
         realm_roles_result.results | map(attribute='changed') | map('ternary', 'created', 'already up-to-date')
       ) | list }}
 
-# ── Seed admin user — password (generate-if-absent from OpenBao) ──────────────
+# ── Seed admin user — credentials (generate-if-absent from OpenBao) ───────────
+# Stored at {prefix}/seed-admin-password with keys username + password. The KV
+# entry is also surfaced as a k8s Secret by Phase 2 (agentstack_secrets), so the
+# write must ALWAYS end with both keys present — including self-healing an older
+# entry that was created with only `password`.
 
-- name: Check if seed admin password already exists in OpenBao
+- name: Read seed admin credentials from OpenBao (data path)
   ansible.builtin.uri:
     url: >-
-      {{ openbao_addr }}/v1/{{ openbao_kv_mount }}/metadata/{{
+      {{ openbao_addr }}/v1/{{ openbao_kv_mount }}/data/{{
         openbao_kv_prefix }}/{{ agentstack_seed_admin_password_kv_subpath }}
     method: GET
     headers:
@@ -66,21 +70,31 @@
     validate_certs: "{{ openbao_tls_verify }}"
     ca_path: "{{ internal_ca_bundle_path }}"
     status_code: [200, 404]
-  register: seed_pw_metadata
+  register: seed_pw_data
   changed_when: false
   no_log: true
 
-# Generate a cryptographically random password when the KV path is absent.
+# Generate a cryptographically random password only when the KV path is absent.
 # python3 secrets module is available on the target VM (armory already uses it).
 - name: Generate seed admin password (if absent)
   ansible.builtin.command:
     cmd: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
   register: _seed_pw_generated
   changed_when: false
-  when: seed_pw_metadata.status == 404
+  when: seed_pw_data.status == 404
   no_log: true
 
-- name: Write seed admin password to OpenBao (if absent)
+- name: Set seed admin password fact (existing or freshly generated)
+  ansible.builtin.set_fact:
+    agentstack_seed_admin_password: >-
+      {{ (_seed_pw_generated.stdout | trim)
+         if seed_pw_data.status == 404
+         else seed_pw_data.json.data.data.password }}
+  no_log: true
+
+# Write when the entry is missing OR is missing the username key (self-heal an
+# older password-only entry). Idempotent otherwise: same content, no write.
+- name: Write seed admin credentials to OpenBao (if absent or username missing)
   ansible.builtin.uri:
     url: >-
       {{ openbao_addr }}/v1/{{ openbao_kv_mount }}/data/{{
@@ -92,33 +106,14 @@
     body_format: json
     body:
       data:
-        password: "{{ _seed_pw_generated.stdout | trim }}"
+        username: "{{ agentstack_seed_admin_username }}"
+        password: "{{ agentstack_seed_admin_password }}"
     validate_certs: "{{ openbao_tls_verify }}"
     ca_path: "{{ internal_ca_bundle_path }}"
     status_code: [200, 204]
-  when: seed_pw_metadata.status == 404
-  no_log: true
-
-- name: Read seed admin password from OpenBao
-  ansible.builtin.uri:
-    url: >-
-      {{ openbao_addr }}/v1/{{ openbao_kv_mount }}/data/{{
-        openbao_kv_prefix }}/{{ agentstack_seed_admin_password_kv_subpath }}
-    method: GET
-    headers:
-      X-Vault-Token: "{{ openbao_provisioner_token }}"
-      X-Vault-Request: "true"
-    validate_certs: "{{ openbao_tls_verify }}"
-    ca_path: "{{ internal_ca_bundle_path }}"
-    status_code: [200]
-  register: seed_pw_read
-  changed_when: false
-  no_log: true
-
-- name: Set seed admin password fact
-  ansible.builtin.set_fact:
-    agentstack_seed_admin_password: "{{ seed_pw_read.json.data.data.password }}"
-  changed_when: false
+  when: >-
+    seed_pw_data.status == 404
+    or ('username' not in (seed_pw_data.json.data.data | default({})))
   no_log: true
 
 # ── Seed admin user ───────────────────────────────────────────────────────────

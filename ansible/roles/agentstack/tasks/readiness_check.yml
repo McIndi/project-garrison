@@ -1,0 +1,43 @@
+---
+# Readiness check: verify AgentStack UI + server Deployments are running
+
+- name: Wait for AgentStack Deployments to be ready
+  block:
+    - name: Wait for UI Deployment to be ready
+      kubernetes.core.k8s_info:
+        kind: Deployment
+        name: "{{ agentstack_release_name }}-ui"
+        namespace: "{{ agentstack_namespace }}"
+      register: ui_deployment
+      until:
+        - ui_deployment.resources is defined
+        - ui_deployment.resources | length > 0
+        - ui_deployment.resources[0].status.updatedReplicas | default(0) == ui_deployment.resources[0].spec.replicas | default(0)
+        - ui_deployment.resources[0].status.readyReplicas | default(0) == ui_deployment.resources[0].spec.replicas | default(0)
+        - ui_deployment.resources[0].status.availableReplicas | default(0) == ui_deployment.resources[0].spec.replicas | default(0)
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Wait for server Deployment to be ready
+      kubernetes.core.k8s_info:
+        kind: Deployment
+        name: "{{ agentstack_release_name }}-server"
+        namespace: "{{ agentstack_namespace }}"
+      register: server_deployment
+      until:
+        - server_deployment.resources is defined
+        - server_deployment.resources | length > 0
+        - server_deployment.resources[0].status.updatedReplicas | default(0) == server_deployment.resources[0].spec.replicas | default(0)
+        - server_deployment.resources[0].status.readyReplicas | default(0) == server_deployment.resources[0].spec.replicas | default(0)
+        - server_deployment.resources[0].status.availableReplicas | default(0) == server_deployment.resources[0].spec.replicas | default(0)
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Log readiness
+      ansible.builtin.debug:
+        msg: |
+          AgentStack deployments ready:
+          - UI: {{ ui_deployment.resources[0].status.readyReplicas }}/{{ ui_deployment.resources[0].spec.replicas }}
+          - Server: {{ server_deployment.resources[0].status.readyReplicas }}/{{ server_deployment.resources[0].spec.replicas }}

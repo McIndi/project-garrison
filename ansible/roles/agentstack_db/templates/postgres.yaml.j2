@@ -1,0 +1,142 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ agentstack_pg_service }}
+  namespace: {{ agentstack_namespace }}
+  labels:
+    app.kubernetes.io/name: agentstack-postgres
+    app.kubernetes.io/part-of: agentstack
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: agentstack-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ agentstack_pg_service }}
+  namespace: {{ agentstack_namespace }}
+  labels:
+    app.kubernetes.io/name: agentstack-postgres
+    app.kubernetes.io/part-of: agentstack
+spec:
+  serviceName: {{ agentstack_pg_service }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agentstack-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agentstack-postgres
+        app.kubernetes.io/part-of: agentstack
+    spec:
+      securityContext:
+        fsGroup: 999
+{% if agentstack_pg_tls_enabled | bool %}
+      initContainers:
+        - name: postgres-tls-permissions
+          image: {{ agentstack_pg_tls_init_image }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              cp /tls-src/tls.crt /tls/tls.crt
+              cp /tls-src/tls.key /tls/tls.key
+              if [ -f /tls-src/ca.crt ]; then cp /tls-src/ca.crt /tls/ca.crt; fi
+              chmod 600 /tls/tls.key
+              chmod 644 /tls/tls.crt
+              if [ -f /tls/ca.crt ]; then chmod 644 /tls/ca.crt; fi
+              chown 999:999 /tls/tls.key /tls/tls.crt /tls/ca.crt 2>/dev/null || true
+          volumeMounts:
+            - name: postgres-tls-source
+              mountPath: /tls-src
+              readOnly: true
+            - name: postgres-tls
+              mountPath: /tls
+{% endif %}
+      containers:
+        - name: postgres
+          image: {{ agentstack_pg_image }}
+          imagePullPolicy: IfNotPresent
+{% if agentstack_pg_tls_enabled | bool %}
+          args:
+            - -c
+            - ssl=on
+            - -c
+            - ssl_cert_file=/etc/postgresql/tls/tls.crt
+            - -c
+            - ssl_key_file=/etc/postgresql/tls/tls.key
+{% endif %}
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: "{{ agentstack_db_name }}"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ agentstack_db_secret_name }}
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ agentstack_db_secret_name }}
+                  key: password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+{% if agentstack_pg_tls_enabled | bool %}
+            - name: postgres-tls
+              mountPath: /etc/postgresql/tls
+              readOnly: true
+{% endif %}
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ agentstack_db_username }}", "-d", "{{ agentstack_db_name }}"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ agentstack_db_username }}", "-d", "{{ agentstack_db_name }}"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+{% if agentstack_pg_tls_enabled | bool %}
+      volumes:
+        - name: postgres-tls-source
+          secret:
+            secretName: {{ agentstack_pg_tls_secret_name }}
+        - name: postgres-tls
+          emptyDir: {}
+{% endif %}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+{% if (agentstack_pg_storage_class | default('') | trim) | length > 0 %}
+        storageClassName: {{ agentstack_pg_storage_class }}
+{% endif %}
+        resources:
+          requests:
+            storage: {{ agentstack_pg_storage_size }}

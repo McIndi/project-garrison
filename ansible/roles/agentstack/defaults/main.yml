@@ -1,0 +1,164 @@
+---
+# AgentStack Helm release deployment (Phase 3)
+# External Keycloak + self-rolled Postgres + external OIDC configuration
+
+agentstack_enabled: true
+
+# ── General ────────────────────────────────────────────────────────────────────────
+agentstack_namespace: "agentstack"
+agentstack_release_name: "agentstack"
+
+# ── Helm Chart ────────────────────────────────────────────────────────────────────────
+# AgentStack Helm chart (bundled Keycloak disabled, external OIDC + Postgres).
+# Distributed as an OCI artifact — verified ref taken from armory's (now-deleted)
+# beeai_agentstack_tofu role. OCI charts need NO `helm repo add`; the OCI URL is
+# passed directly as chart_ref. The published registry latest is 0.7.1 — the
+# spec's "0.7.2" is the unreleased main-branch appVersion and 404s on pull. The
+# external-OIDC contract is byte-identical between 0.7.1 and 0.7.2 (verified
+# against `helm show values ... --version 0.7.1`).
+agentstack_chart_oci_ref: "oci://ghcr.io/i-am-bee/agentstack/chart/agentstack"
+agentstack_chart_version: "0.7.1"
+
+# ── Public URLs (from .env or override) ────────────────────────────────────────────
+# Must be set at runtime (from .env or group_vars):
+#   agentstack_armory_domain: "armory.local" or "armory.<actual-domain>"
+#   agentstack_ui_host: "agentstack.{{ agentstack_armory_domain }}"
+#   agentstack_keycloak_public_url: "https://{{ agentstack_armory_domain }}"
+#
+# Defaults provided here for idempotency:
+agentstack_armory_domain: "armory.local"
+agentstack_ui_host: "agentstack.{{ agentstack_armory_domain }}"
+agentstack_keycloak_public_url: "https://{{ agentstack_armory_domain }}"
+
+# ── OIDC + Keycloak ────────────────────────────────────────────────────────────────
+# Keycloak realm provisioned in Phase 1 (agentstack_keycloak role)
+agentstack_keycloak_realm: "agentstack"
+# Clients created in Phase 1
+agentstack_ui_client_id: "agentstack-ui"
+agentstack_server_client_id: "agentstack-server"
+# Secrets stored in OpenBao KV + synced via VSO VaultStaticSecret (Phase 2)
+agentstack_oidc_client_secrets_secret_name: "agentstack-oidc-client-secrets"
+
+# ── External Database (self-rolled Postgres from Phase 3: agentstack_db) ────────────
+# Self-rolled StatefulSet Service FQDN (agentstack_db role). Ignored by the chart
+# when externalDatabase.existingSecret is set (it reads the pre-built
+# sqlConnection key), but kept here for documentation/parity.
+agentstack_db_host: "agentstack-postgresql.{{ agentstack_namespace }}.svc.cluster.local"
+agentstack_db_port: 5432
+agentstack_db_name: "agentstack"
+agentstack_db_username: "agentstack"
+# Secret with username, password, postgres keys (from Phase 2: agentstack_secrets)
+agentstack_db_secret_name: "agentstack-postgres-credentials"
+# CA bundle from trust-manager Bundle (Phase 2: agentstack_secrets)
+agentstack_db_ca_secret_name: "agentstack-public-ca"
+agentstack_db_ca_cert_key: "ca.crt"
+# cert-manager Secret backing the Postgres server's TLS cert (Phase 2). Its
+# ca.crt is the pki-int CA the server must trust to verify the DB over SSL; it
+# is injected into externalDatabase.sslRootCert at deploy time. With
+# PERSISTENCE__DB_USE_SSL=true the app REQUIRES this — an empty sslRootCert makes
+# it crash (load_verify_locations with no CA).
+agentstack_db_tls_secret_name: "agentstack-postgresql-tls"
+
+# ── Secrets (from Phase 2: agentstack_secrets role) ───────────────────────────────
+# These are generated in OpenBao + read by Ansible + injected as Helm values
+# (not VSO Secrets — the chart has no existingSecret hooks for these).
+# Phase 2 caches them in facts for Phase 3.
+#   agentstack_encryption_key: "{{ agentstack_encryption_key | default('') }}"
+#   agentstack_nextauth_secret: "{{ agentstack_nextauth_secret | default('') }}"
+
+# ── Helm Values Overrides (all chart defaults disabled/external) ───────────────────
+# Keycloak subchart disabled (we use armory's external Keycloak)
+agentstack_helm_values:
+  keycloak:
+    enabled: false
+  # PostgreSQL subchart disabled; externalDatabase points to our self-rolled StatefulSet
+  postgresql:
+    enabled: false
+  externalDatabase:
+    # Confirmed keys (helm show values 0.7.1): host, port, user, database,
+    # password, existingSecret, ssl, sslRootCert. No `type`/`existingSecretPasswordKey`.
+    host: "{{ agentstack_db_host }}"
+    port: "{{ agentstack_db_port }}"
+    user: "{{ agentstack_db_username }}"
+    database: "{{ agentstack_db_name }}"
+    existingSecret: "{{ agentstack_db_secret_name }}"
+    ssl: true
+    # sslRootCert is an INLINE PEM (not a file path). Left empty = TLS-encrypted
+    # (sslmode=require) without server-cert verification — acceptable for the
+    # in-cluster pod→self-rolled-Postgres hop. To pin to verify-full later, set
+    # this to the pki-int CA PEM string.
+    sslRootCert: ""
+  # External OIDC provider (armory's Keycloak). Key names (uiClientSecretKey/
+  # serverClientSecretKey) keep their chart defaults, which match the VSO output.
+  externalOidcProvider:
+    issuerUrl: "{{ agentstack_keycloak_public_url }}/realms/{{ agentstack_keycloak_realm }}"
+    uiClientId: "{{ agentstack_ui_client_id }}"
+    serverClientId: "{{ agentstack_server_client_id }}"
+    existingSecret: "{{ agentstack_oidc_client_secrets_secret_name }}"
+  # Authentication: OIDC-only (basic disabled), audience validation on.
+  # `encryptionKey` (top-level) and `auth.nextauthSecret` are REQUIRED, have no
+  # existingSecret hook, and are injected at deploy time from the Phase 2 facts
+  # (agentstack_helm_encryption_key / agentstack_helm_nextauth_secret) in
+  # helm_release.yml — NOT here, so they never sit in defaults.
+  auth:
+    enabled: true
+    validateAudience: true
+    basic:
+      enabled: false
+    # Public URLs (chart default is localhost — must point at the real ingress host)
+    nextauthUrl: "https://{{ agentstack_ui_host }}"
+    apiUrl: "https://{{ agentstack_ui_host }}"
+  # Trust proxy headers (X-Forwarded-* from nginx-ingress) — top-level key
+  trustProxyHeaders: true
+  # Ingress configuration
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: "{{ agentstack_ui_host }}"
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: "{{ agentstack_ui_ingress_tls_secret_name }}"
+        hosts:
+          - "{{ agentstack_ui_host }}"
+
+# ── UI Ingress TLS ────────────────────────────────────────────────────────────────
+# cert-manager will create this Secret (Certificate resource from Phase 3)
+agentstack_ui_ingress_tls_secret_name: "agentstack-ui-tls"
+agentstack_ui_ingress_cert_issuer: "openbao-pki-external"
+
+# ── Dual-issuer patch: hostAlias + private-CA trust (armory's proven pattern) ──────
+# In external-OIDC mode the UI + server pods must reach the PUBLIC issuer
+# (https://armory.local/realms/agentstack) which only resolves at the ingress and
+# is served with a private-CA (Armory Root CA) cert. Two things are required on
+# both Deployments, neither of which the chart does itself:
+#   1. a hostAlias mapping the public host(s) → the nginx-ingress ClusterIP, and
+#   2. the public CA mounted in-pod + NODE_EXTRA_CA_CERTS so TLS verify passes.
+# Discovered from the ingress-nginx Service; CA comes from the Phase 2 trust bundle.
+agentstack_hostaliases_ingress_service_name: "ingress-nginx-controller"
+agentstack_hostaliases_ingress_namespace: "ingress-nginx"
+
+# Public hostnames the pods must resolve to the ingress (issuer host + UI host).
+agentstack_hostaliases_hostnames:
+  - "{{ agentstack_armory_domain }}"
+  - "{{ agentstack_ui_host }}"
+
+# Container names INSIDE each Deployment (chart-fixed; verified against armory):
+#   UI Deployment    agentstack-ui  → container "agentstack-ui"
+#   server Deployment agentstack-server → container "agentstack"
+agentstack_ui_deployment_name: "{{ agentstack_release_name }}-ui"
+agentstack_ui_container_name: "agentstack-ui"
+agentstack_server_deployment_name: "{{ agentstack_release_name }}-server"
+agentstack_server_container_name: "agentstack"
+
+# Private CA to trust in-pod (Armory Root CA), from the Phase 2 trust-manager
+# Bundle synced into the agentstack namespace.
+agentstack_oidc_ca_secret_name: "{{ agentstack_db_ca_secret_name }}"
+agentstack_oidc_ca_secret_key: "ca.crt"
+agentstack_oidc_ca_mount_path: "/etc/agentstack-ca"
+agentstack_oidc_ca_file_path: "/etc/agentstack-ca/ca.crt"
+
+# ── Pod/security context ──────────────────────────────────────────────────────────
+agentstack_pod_security_policy: "restricted"

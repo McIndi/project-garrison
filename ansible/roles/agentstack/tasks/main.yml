@@ -1,0 +1,29 @@
+---
+# AgentStack Helm release deployment (Phase 3)
+# Orchestrates: Helm repo, Chart values, release deployment, hostAlias patches, ingress TLS
+#
+# Dependencies from earlier phases:
+#   - agentstack_namespace exists (Phase 2: agentstack_secrets creates it)
+#   - OIDC client secrets synced (Phase 2: agentstack_secrets VaultStaticSecret)
+#   - Postgres StatefulSet running (Phase 3: agentstack_db)
+#   - Postgres credentials Secret synced (Phase 2: agentstack_secrets)
+#   - DB TLS cert issued (Phase 2: agentstack_secrets cert-manager Certificate)
+#   - Trust bundles synced (Phase 2: agentstack_secrets trust-manager Bundles)
+#   - Keycloak realm + clients provisioned (Phase 1: agentstack_keycloak)
+
+- name: Deploy AgentStack Helm release
+  block:
+    # OCI chart — no helm_repository task; chart_ref is the oci:// URL directly.
+    # Order matters: create (wait:false) → ingress cert → dual-issuer patch
+    # (triggers rollout) → THEN gate on readiness.
+    - name: Include helm_release subtask
+      ansible.builtin.include_tasks: helm_release.yml
+
+    - name: Include ui_ingress subtask
+      ansible.builtin.include_tasks: ui_ingress.yml
+
+    - name: Include hostaliases_patch subtask
+      ansible.builtin.include_tasks: hostaliases_patch.yml
+
+    - name: Include readiness_check subtask
+      ansible.builtin.include_tasks: readiness_check.yml

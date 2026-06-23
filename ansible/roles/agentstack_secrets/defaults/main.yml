@@ -39,6 +39,16 @@ agentstack_client_secrets_vso_name: agentstack-client-secrets
 agentstack_client_secrets_secret_name: agentstack-oidc-client-secrets
 agentstack_client_secrets_refresh_after: 3600s  # Re-sync every hour
 
+# ── Seed admin credentials (human login) → k8s Secret via VSO ────────────────
+# The seed-admin password is generated in Phase 1 and stored in OpenBao at
+# {prefix}/seed-admin-password (now with username + password keys). No pod
+# consumes it, but we surface it as a k8s Secret to match armory's "all creds
+# visible as k8s Secrets" pattern, so it can be read with a plain kubectl get
+# instead of the break-glass root-token decrypt.
+agentstack_admin_creds_openbao_path: "{{ agentstack_openbao_kv_prefix }}/seed-admin-password"
+agentstack_admin_creds_vso_name: agentstack-admin-credentials
+agentstack_admin_creds_secret_name: agentstack-admin-credentials
+
 # ── Postgres DB secrets (Phase 2, Task 5) ────────────────────────────────────
 agentstack_db_openbao_path: "{{ agentstack_openbao_kv_prefix }}/agentstack-postgres"
 agentstack_db_username: agentstack
@@ -46,6 +56,12 @@ agentstack_db_database: agentstack
 agentstack_db_vso_name: agentstack-postgres-db-secret
 agentstack_db_secret_name: agentstack-postgres-credentials
 agentstack_db_service_fqdn: "agentstack-postgresql.{{ agentstack_namespace }}.svc.cluster.local"
+# Components of the sqlConnection URL stored alongside the creds (read by the
+# chart as PERSISTENCE__DB_URL). Host MUST match the self-rolled Service name in
+# the agentstack_db role (agentstack-postgresql) and the TLS cert SAN above.
+agentstack_db_sql_host: "{{ agentstack_db_service_fqdn }}"
+agentstack_db_sql_port: 5432
+agentstack_db_sql_name: "{{ agentstack_db_database }}"
 
 # ── Postgres TLS certificate (Phase 2, Task 5) ────────────────────────────────
 agentstack_db_cert_issuer: openbao-pki-internal  # ClusterIssuer in cert-manager

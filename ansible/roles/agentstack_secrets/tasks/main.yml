@@ -13,6 +13,7 @@
 #   5. oidc_client_secrets            — generate OIDC secrets + VSO sync
 #   6. postgres_secrets               — generate Postgres creds + TLS cert + VSO sync
 #   7. other_secrets                  — encryptionKey, auth.nextauthSecret, Redis, SeaweedFS
+#   8. admin_credentials              — surface seed-admin login creds as a k8s Secret (VSO)
 #
 # All tasks are idempotent by construction (principle #2). Generate-if-absent
 # applies to all secrets. The openbao_provisioner_token fact must be set
@@ -62,3 +63,7 @@
 - name: "Phase 2 — Other secrets: encryptionKey, auth.nextauthSecret, Redis, SeaweedFS"
   ansible.builtin.include_tasks:
     file: other_secrets.yml
+
+- name: "Phase 2 — Seed-admin login credentials → k8s Secret (VSO)"
+  ansible.builtin.include_tasks:
+    file: admin_credentials.yml

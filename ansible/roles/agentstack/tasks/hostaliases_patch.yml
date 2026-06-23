@@ -1,0 +1,91 @@
+---
+# Dual-issuer patch for the AgentStack UI + server Deployments.
+#
+# In external-OIDC mode the pods talk to the PUBLIC issuer
+# (https://{{ agentstack_armory_domain }}/realms/agentstack), which:
+#   1. only resolves at the nginx ingress (not via cluster DNS), and
+#   2. is served with an Armory-Root-CA (private) certificate.
+# The chart provisions neither the name resolution nor the CA trust, so we patch
+# both Deployments with (a) a hostAlias → ingress ClusterIP and (b) the Phase 2
+# public-CA Secret mounted in-pod + NODE_EXTRA_CA_CERTS. This is armory's proven
+# Headlamp/BeeAI pattern (vendored, not imported).
+#
+# Strategic-merge patch: containers/volumes/volumeMounts/env merge by `name`, so
+# we touch only our container and add our volume/env without clobbering the rest.
+# hostAliases has no merge key (whole-list replace) — we own it, so that's fine.
+
+- name: Apply dual-issuer (hostAlias + CA trust) patch to AgentStack Deployments
+  block:
+    - name: Get ingress-nginx controller Service ClusterIP
+      kubernetes.core.k8s_info:
+        kind: Service
+        name: "{{ agentstack_hostaliases_ingress_service_name }}"
+        namespace: "{{ agentstack_hostaliases_ingress_namespace }}"
+      register: _ingress_service
+      changed_when: false
+
+    - name: Assert ingress ClusterIP was discovered
+      ansible.builtin.assert:
+        that:
+          - _ingress_service.resources | length > 0
+          - _ingress_service.resources[0].spec.clusterIP is defined
+          - _ingress_service.resources[0].spec.clusterIP not in ['', 'None']
+        fail_msg: >-
+          Could not resolve the ingress ClusterIP from Service
+          {{ agentstack_hostaliases_ingress_service_name }} in
+          {{ agentstack_hostaliases_ingress_namespace }}. The dual-issuer
+          hostAlias cannot be built without it.
+
+    - name: Set ingress ClusterIP fact
+      ansible.builtin.set_fact:
+        _ingress_cluster_ip: "{{ _ingress_service.resources[0].spec.clusterIP }}"
+
+    # The patch body is identical bar the container name, so build it once per
+    # Deployment via a loop over (deployment, container) pairs.
+    - name: Patch UI + server Deployments with hostAlias and private-CA trust
+      kubernetes.core.k8s:
+        state: patched
+        kind: Deployment
+        name: "{{ item.deployment }}"
+        namespace: "{{ agentstack_namespace }}"
+        definition:
+          spec:
+            template:
+              spec:
+                hostAliases:
+                  - ip: "{{ _ingress_cluster_ip }}"
+                    hostnames: "{{ agentstack_hostaliases_hostnames }}"
+                volumes:
+                  - name: agentstack-oidc-ca
+                    secret:
+                      secretName: "{{ agentstack_oidc_ca_secret_name }}"
+                      items:
+                        - key: "{{ agentstack_oidc_ca_secret_key }}"
+                          path: "{{ agentstack_oidc_ca_secret_key }}"
+                containers:
+                  - name: "{{ item.container }}"
+                    volumeMounts:
+                      - name: agentstack-oidc-ca
+                        mountPath: "{{ agentstack_oidc_ca_mount_path }}"
+                        readOnly: true
+                    env:
+                      # Additive (does not replace the system bundle) — for the
+                      # Node/Next.js UI. The Python server may instead need
+                      # SSL_CERT_FILE/REQUESTS_CA_BUNDLE; confirm at VM validation.
+                      - name: NODE_EXTRA_CA_CERTS
+                        value: "{{ agentstack_oidc_ca_file_path }}"
+      loop:
+        - { deployment: "{{ agentstack_ui_deployment_name }}", container: "{{ agentstack_ui_container_name }}" }
+        - { deployment: "{{ agentstack_server_deployment_name }}", container: "{{ agentstack_server_container_name }}" }
+      loop_control:
+        label: "{{ item.deployment }} ({{ item.container }})"
+      register: _agentstack_dualissuer_patch
+
+    - name: Report dual-issuer patch outcome
+      ansible.builtin.debug:
+        msg: >-
+          Dual-issuer patch applied to {{ agentstack_ui_deployment_name }} +
+          {{ agentstack_server_deployment_name }}:
+          hostAlias {{ agentstack_hostaliases_hostnames | join(',') }} ->
+          {{ _ingress_cluster_ip }}; CA {{ agentstack_oidc_ca_secret_name }}
+          mounted at {{ agentstack_oidc_ca_file_path }}.

@@ -1,0 +1,74 @@
+---
+# Deploy the AgentStack Helm release with external Keycloak + self-rolled Postgres
+
+- name: Deploy AgentStack Helm release
+  block:
+    - name: Ensure agentstack namespace exists
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ agentstack_namespace }}"
+
+    - name: Read the Postgres TLS CA (ca.crt) for DB SSL verification
+      kubernetes.core.k8s_info:
+        kind: Secret
+        name: "{{ agentstack_db_tls_secret_name }}"
+        namespace: "{{ agentstack_namespace }}"
+      register: _pg_tls_secret
+
+    - name: Set DB SSL root-CA fact (PEM) from the Postgres TLS secret
+      ansible.builtin.set_fact:
+        agentstack_db_ssl_ca_pem: "{{ _pg_tls_secret.resources[0].data['ca.crt'] | b64decode }}"
+      when:
+        - _pg_tls_secret.resources | length > 0
+        - "'ca.crt' in _pg_tls_secret.resources[0].data"
+
+    - name: Assert the DB SSL root CA was found (required by PERSISTENCE__DB_USE_SSL)
+      ansible.builtin.assert:
+        that:
+          - agentstack_db_ssl_ca_pem is defined
+          - agentstack_db_ssl_ca_pem | length > 0
+        fail_msg: >-
+          Could not read ca.crt from Secret {{ agentstack_db_tls_secret_name }} in
+          {{ agentstack_namespace }}. The agentstack server enables DB SSL and
+          REQUIRES the CA — confirm Phase 2 issued the Postgres TLS certificate.
+
+    - name: Deploy agentstack Helm release (OCI chart, no repo add)
+      kubernetes.core.helm:
+        name: "{{ agentstack_release_name }}"
+        namespace: "{{ agentstack_namespace }}"
+        # OCI chart_ref is passed directly — no helm_repository task needed.
+        chart_ref: "{{ agentstack_chart_oci_ref }}"
+        chart_version: "{{ agentstack_chart_version }}"
+        state: present
+        # Inject the REQUIRED hookless secrets (Phase 2 facts) on top of the base
+        # values: encryptionKey (top-level), auth.nextauthSecret, and the DB SSL
+        # root CA (externalDatabase.sslRootCert) the server needs to verify the
+        # Postgres TLS cert (PERSISTENCE__DB_USE_SSL=true → load_verify_locations).
+        values: >-
+          {{
+            agentstack_helm_values | combine({
+              'encryptionKey': agentstack_helm_encryption_key,
+              'auth': {'nextauthSecret': agentstack_helm_nextauth_secret},
+              'externalDatabase': {'sslRootCert': agentstack_db_ssl_ca_pem}
+            }, recursive=True)
+          }}
+        # wait:false BREAKS THE DEADLOCK: the pods can't become Ready until the
+        # dual-issuer hostAlias + CA patch (a later task) is applied, but --wait
+        # would block on that readiness first. We create the resources now, patch
+        # next, then gate on readiness in readiness_check.yml.
+        wait: false
+      register: helm_release
+
+    - name: Log Helm release deployment
+      ansible.builtin.debug:
+        msg: |
+          AgentStack Helm release deployed:
+          - Release: {{ agentstack_release_name }}
+          - Namespace: {{ agentstack_namespace }}
+          - Chart: {{ agentstack_chart_oci_ref }}:{{ agentstack_chart_version }}
+          - External Keycloak: {{ agentstack_keycloak_public_url }}/realms/{{ agentstack_keycloak_realm }}
+          - External Database: {{ agentstack_db_host }}:{{ agentstack_db_port }}

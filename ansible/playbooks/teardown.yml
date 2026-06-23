@@ -76,6 +76,30 @@
         name: common
         tasks_from: prepare_keycloak_bootstrap_admin.yml
 
+    # The community.general.keycloak_* modules use open_url(), which validates TLS
+    # via the SYSTEM trust store only — it ignores ca_path/SSL_CERT_FILE/
+    # REQUESTS_CA_BUNDLE (verified 2026-06-22, mirrors agentstack_keycloak/ca_proof.yml).
+    # So install the combined internal-CA bundle into the OS anchors BEFORE the
+    # realm delete. We install to the SAME path the trust-store cleanup removes at
+    # the end of this play (garrison_ca_trust_anchor_path), keeping it symmetric.
+    - name: Install garrison internal-CA bundle into the system trust store
+      block:
+        - name: Copy combined internal-CA bundle to the system trust anchor
+          ansible.builtin.copy:
+            src: "{{ internal_ca_bundle_path }}"
+            dest: "{{ garrison_ca_trust_anchor_path }}"
+            remote_src: true
+            mode: "0644"
+          become: true
+          register: garrison_ca_anchor_installed
+
+        - name: Rebuild system CA trust store (only if the anchor changed)
+          ansible.builtin.command:
+            cmd: update-ca-trust extract
+          become: true
+          changed_when: false
+          when: garrison_ca_anchor_installed.changed
+
     - name: Delete Helm release
       block:
         - name: Helm uninstall agentstack
@@ -126,10 +150,9 @@
             realm: "{{ agentstack_realm }}"
             state: absent
             validate_certs: "{{ keycloak_tls_verify }}"
-            # ca_path is the real trust mechanism here — keycloak_realm accepts it.
-            # (No SSL_CERT_FILE/REQUESTS_CA_BUNDLE env fallback: open_url ignores
-            # those, so it would be dead weight — verified 2026-06-22.)
-            ca_path: "{{ internal_ca_bundle_path }}"
+            # NO ca_path: keycloak_realm rejects it (open_url has no such param).
+            # TLS is validated via the system trust store, into which the combined
+            # internal-CA bundle was installed above (update-ca-trust extract).
           no_log: true
 
         - name: Debug — Keycloak realm deleted

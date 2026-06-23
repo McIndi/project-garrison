@@ -1,0 +1,41 @@
+---
+# Create the UI ingress TLS certificate and ingress resource
+
+- name: Deploy UI ingress TLS and ingress resource
+  block:
+    - name: Create cert-manager Certificate for UI ingress (pki-external)
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: cert-manager.io/v1
+          kind: Certificate
+          metadata:
+            name: "{{ agentstack_ui_ingress_tls_secret_name }}"
+            namespace: "{{ agentstack_namespace }}"
+          spec:
+            secretName: "{{ agentstack_ui_ingress_tls_secret_name }}"
+            issuerRef:
+              name: "{{ agentstack_ui_ingress_cert_issuer }}"
+              kind: ClusterIssuer
+            commonName: "{{ agentstack_ui_host }}"
+            dnsNames:
+              - "{{ agentstack_ui_host }}"
+
+    - name: Wait for UI ingress certificate to be issued
+      kubernetes.core.k8s_info:
+        kind: Certificate
+        name: "{{ agentstack_ui_ingress_tls_secret_name }}"
+        namespace: "{{ agentstack_namespace }}"
+      register: ui_cert
+      until:
+        - ui_cert.resources is defined
+        - ui_cert.resources | length > 0
+        - ui_cert.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | list | length > 0
+        - (ui_cert.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | list)[0] == 'True'
+      retries: 30
+      delay: 5
+      changed_when: false
+
+    - name: Log UI ingress deployment
+      ansible.builtin.debug:
+        msg: "AgentStack UI ingress TLS certificate issued for {{ agentstack_ui_host }}"

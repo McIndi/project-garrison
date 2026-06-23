@@ -1,0 +1,42 @@
+---
+# AgentStack self-rolled PostgreSQL 16 StatefulSet deployment
+# Replaces the disabled Bitnami subchart from the agentstack Helm chart.
+#
+# Dependencies from Phase 2 (agentstack_secrets):
+#   - agentstack_db_secret_name Secret (VSO VaultStaticSecret) with keys:
+#     username, password, postgres
+#   - agentstack_pg_tls_cert_secret_name Secret (cert-manager Certificate)
+#     with keys: tls.crt, tls.key, ca.crt (if TLS enabled)
+
+- name: Deploy AgentStack self-rolled PostgreSQL
+  block:
+    - name: Template and apply Postgres Service + StatefulSet
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('template', 'postgres.yaml.j2') | from_yaml_all | list }}"
+      register: agentstack_postgres_applied
+
+    - name: Wait for Postgres StatefulSet to be ready
+      kubernetes.core.k8s_info:
+        kind: StatefulSet
+        name: "{{ agentstack_pg_service }}"
+        namespace: "{{ agentstack_namespace }}"
+      register: postgres_statefulset
+      until:
+        - postgres_statefulset.resources is defined
+        - postgres_statefulset.resources | length > 0
+        - postgres_statefulset.resources[0].status.readyReplicas | default(0) == 1
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    # No explicit pg_isready exec here: the StatefulSet's readiness probe IS
+    # pg_isready, so reaching readyReplicas == 1 above already proves the DB
+    # accepts connections. A kubernetes.core.k8s_exec call would be redundant and
+    # is fragile (it misparses the exec API response into "invalid literal for
+    # int()" on transient runtime hiccups). Verified manually: the pod runs 1/1
+    # and `pg_isready` returns "accepting connections".
+
+    - name: Log Postgres deployment completion
+      ansible.builtin.debug:
+        msg: "AgentStack PostgreSQL 16 deployed: Service={{ agentstack_pg_service }}.{{ agentstack_namespace }}.svc.cluster.local, SSL={{ agentstack_pg_tls_enabled }}"

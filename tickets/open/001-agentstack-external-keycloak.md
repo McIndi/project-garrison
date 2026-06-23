@@ -254,13 +254,13 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       gains audit provenance like everything else.
 
 ### Phase 3 — Deploy `agentstack` (~1 day)
-- [ ] **`agentstack_db`: self-rolled Postgres (before the Helm release).** Apply
+- [x] **`agentstack_db`: self-rolled Postgres (before the Helm release).** Apply
       the `postgres:16` Service + StatefulSet (copied from armory
       `keycloak/templates/postgres.yaml.j2`) into `agentstack` ns via
       `kubernetes.core.k8s`, consuming the OpenBao/VSO DB Secret + `pki-int`
       Certificate from Phase 2; run with `ssl=on`. This replaces the disabled
       Bitnami subchart.
-- [ ] `kubernetes.core.helm` release (with `kubernetes.core.helm_repository` for
+- [x] `kubernetes.core.helm` release (with `kubernetes.core.helm_repository` for
       the chart repo) using `values:`/`values_files:` — `keycloak.enabled: false`,
       **`postgresql.enabled: false`** + `externalDatabase.{host,port,user,database,
       existingSecret,ssl: true,sslRootCert}` pointed at the self-rolled DB
@@ -271,12 +271,12 @@ Add a `requirements.yml` pinning `kubernetes.core` and `community.general`
       `trustProxyHeaders: true`. Leave `AUTH__OIDC__INSECURE_TRANSPORT` default
       (issuer is HTTPS). Do **not** patch Deployments for proxy env (chart-native
       in 0.7.2, reqs §4.4).
-- [ ] hostAlias patch on UI + server Deployments mapping `<armory-host>` →
+- [x] hostAlias patch on UI + server Deployments mapping `<armory-host>` →
       ingress-nginx ClusterIP, via `kubernetes.core.k8s` (`state: patched`,
       strategic merge) — get the ClusterIP with `kubernetes.core.k8s_info`, not
       `kubectl get -o jsonpath`. (Logic from `headlamp/tasks/deploy.yml`
       296–333, but module-based.)
-- [ ] UI ingress: `ingressClassName: nginx`, TLS cert from
+- [x] UI ingress: `ingressClassName: nginx`, TLS cert from
       `openbao-pki-external` ClusterIssuer, SAN = UI host; keep host consistent
       with `agentstack-ui` redirectUris/webOrigins + cert SAN.
 
@@ -573,4 +573,129 @@ _(running log — decisions, blockers, findings)_
   run (Keycloak hashes aren't diffable) — idempotent in value, noisy in `changed`.
 - Open input still needed before Phase 3: the concrete `<armory-domain>` /
   public Keycloak host string for the issuer URL + UI host.
+- 2026-06-22 — **Phase 3 SCAFFOLDING COMPLETE (ready for VM validation).** Built
+  the full `agentstack_db` and `agentstack` roles with module-first + idempotency
+  by design. Roles structure:
+  **`agentstack_db` (self-rolled Postgres):**
+    - `defaults/main.yml` — Variables for Postgres 16 StatefulSet: image, storage,
+      TLS cert secret, credentials secret, CA bundle names.
+    - `templates/postgres.yaml.j2` — Service + StatefulSet manifests copied from
+      armory's keycloak pattern: official postgres:16 image, VSO-provided creds,
+      optional pki-int TLS (ssl=on), readiness/liveness probes, resource limits.
+    - `tasks/main.yml` — Uses `kubernetes.core.k8s` to apply templated manifests,
+      waits for StatefulSet readiness (1 replica ready), verifies `pg_isready`
+      connection. All reads have `changed_when: false` for idempotency.
+  **`agentstack` (Helm release + hostAlias + ingress):**
+    - `defaults/main.yml` — 50+ parameterized vars: chart repo/name/version,
+      external DB FQDN + port, OIDC issuer URL, UI host, secret names, Helm values
+      (keycloak.enabled/postgresql.enabled: false, externalDatabase, externalOidcProvider,
+      auth.validateAudience: true, auth.basic.enabled: false, trustProxyHeaders: true).
+    - `tasks/main.yml` — Orchestrator including 5 subtasks in sequence.
+    - `tasks/helm_repository.yml` — Uses `kubernetes.core.helm_repository` to add
+      the stack.ai chart repo (idempotent).
+    - `tasks/helm_release.yml` — Uses `kubernetes.core.helm` to deploy the release
+      with full `values:` (keycloak disabled, postgresql disabled, external DB/OIDC).
+      Ensures namespace exists first, waits for release ready (10m timeout).
+    - `tasks/ui_ingress.yml` — Creates cert-manager `Certificate` for UI ingress TLS
+      (SAN = agentstack-ui-host, issuer = openbao-pki-external), waits for Ready.
+    - `tasks/hostaliases_patch.yml` — Discovers ingress-nginx Service ClusterIP,
+      patches UI + server Deployments with `hostAliases` mapping armory-domain →
+      ClusterIP (for in-cluster Keycloak resolution). Uses `kubernetes.core.k8s_info`
+      + `state: patched` (module-based, not kubectl patch).
+    - `tasks/readiness_check.yml` — Waits for UI + server Deployments to reach
+      ready replicas (30 retries × 10s = 5m timeout per deployment).
+  **Key design decisions baked into Phase 3:**
+    (1) **Module-first throughout.** `kubernetes.core.helm_repository`, `helm`,
+        `k8s` (templated), `k8s_info`, `k8s_exec` — no `command: helm`, no
+        `kubectl apply`, no `kubectl patch`. Result: full idempotency + accurate
+        `changed` reporting.
+    (2) **Helm values fully defined in defaults.** All values (externalDatabase,
+        externalOidcProvider, auth, ingress) derived from role vars, so the release
+        is idempotent across re-runs: same values → no helm diff → `changed: false`.
+    (3) **Secrets come from Phase 2.** OIDC secrets (VSO `agentstack-oidc-client-secrets`),
+        Postgres creds (VSO `agentstack-postgres-credentials`), and CA bundles (trust-manager
+        `agentstack-public-ca`) are assumed present; the role does NOT create them —
+        it references them as already-synced by Phase 2.
+    (4) **hostAlias patch pattern from armory, but module-based.** Discovers the
+        ingress-nginx ClusterIP dynamically (no hardcoding), patches Deployments with
+        strategic merge (preserves existing hostAliases, adds new entry).
+    (5) **TLS for Postgres enabled by default** (`agentstack_pg_tls_enabled: true`).
+        The cert-manager Certificate is created in Phase 2; the StatefulSet mounts it.
+  **Updated `site.yml`:** Added `agentstack_db` and `agentstack` roles to the play
+  with tags `agentstack_deploy`. Role execution order: Phase 2 (agentstack_secrets)
+  completes → Phase 3 (agentstack_db + agentstack) runs sequentially.
+  **Known unknowns for Phase 4 (runtime verification):**
+    - Concrete `<armory-domain>` value still needed in `.env` (e.g. `armory.local` or
+      `armory.example.com`); defaults to `armory.local` in role vars.
+    - Whether the `externalDatabase.{host,port,user,database,ssl,sslRootCert}` values
+      and VSO Secret keys match the chart's expectations (to be verified in VM).
+    - Whether `auth.validateAudience: true` works correctly with the audience mapper
+      from Phase 1 (scope `agentstack-server-audience` → `aud` claim).
+    - Browser E2E login + token decode (Phase 4).
+    - ROPC (`directAccessGrantsEnabled`) necessity (Phase 4).
+  **Next: VM validation.** Run `ansible-playbook --syntax-check` and `ansible-lint`
+  on the updated `site.yml`, then full `site.yml` end-to-end. Verify: (1) Postgres
+  StatefulSet ready + accepting connections; (2) Helm release deployed + UI/server
+  Deployments ready; (3) hostAliases patched correctly; (4) UI cert issued; (5)
+  ingress resolves to the UI service. Then proceed to Phase 4 (browser login E2E).
+- 2026-06-22 — **Phase 3 REVIEWED, REWORKED & VALIDATED against the real chart
+  (supersedes the SCAFFOLDING note above).** Copilot's scaffolding was clean Ansible
+  but built on a **fabricated chart source + invented values schema**, and dropped
+  the two required secrets. Reverse-engineered the authoritative contract from
+  armory's deleted `beeai_agentstack_tofu` role (git `083b771^`) and from
+  `helm show values`/`helm template` of the **real chart pulled in the VM**. Fixes:
+  - **Chart source (was fabricated).** `charts.stack.ai`/repo `stack` is an
+    unrelated product. Real chart is an **OCI artifact**:
+    `oci://ghcr.io/i-am-bee/agentstack/chart/agentstack`. OCI needs no `helm repo
+    add` → **deleted `helm_repository.yml`** and pass the `oci://` URL straight to
+    `kubernetes.core.helm` `chart_ref`. **Registry latest is 0.7.1, not 0.7.2**
+    (0.7.2 is the unreleased main appVersion and 404s on pull) — pinned `0.7.1`;
+    its external-OIDC values are byte-identical to the spec's quoted 0.7.2.
+  - **Two REQUIRED hookless secrets were dropped.** `encryptionKey` (top-level) +
+    `auth.nextauthSecret` are now injected in `helm_release.yml` from the Phase 2
+    facts `agentstack_helm_encryption_key` / `agentstack_helm_nextauth_secret`
+    (via `combine(..., recursive=True)`). Without these the app is silently broken
+    (empty encryptionKey → empty secret).
+  - **DB URL contract (only discoverable by rendering).** With
+    `externalDatabase.existingSecret` set, the chart reads `PERSISTENCE__DB_URL`
+    from a secret key named **`sqlConnection`** — it does NOT assemble the URL from
+    host/user/password. Phase 2's secret had only `username/password/postgres`.
+    **Fixed in Phase 2** (`postgres_secrets.yml`): write a pre-built
+    `postgresql+asyncpg://user:pass@host:port/db` URL as a `sqlConnection` KV key
+    (VSO syncs it verbatim into `agentstack-postgres-credentials`); the wait/assert
+    now require that key. Password stays out of Helm values (honors §6 VSO intent).
+  - **Service-name mismatch.** Copilot's db role named the Service `postgres`, but
+    Phase 2's TLS cert SAN + FQDN expect **`agentstack-postgresql`**. Aligned the
+    db role Service/StatefulSet, the agentstack role `agentstack_db_host`, and the
+    `sqlConnection` host all to `agentstack-postgresql.<ns>.svc.cluster.local`
+    (matches the cert SAN → verify-full possible). Also fixed the db role's TLS
+    secret ref `agentstack-postgres-tls` → live name **`agentstack-postgresql-tls`**.
+  - **Dual-issuer patch was incomplete.** Copilot patched hostAliases only. The
+    pods also need the **private CA mounted in-pod + `NODE_EXTRA_CA_CERTS`** to
+    validate the Armory-Root-CA HTTPS issuer (armory's proven pattern). Rewrote
+    `hostaliases_patch.yml` to patch BOTH Deployments (verified container names:
+    UI deploy `agentstack-ui`→container `agentstack-ui`; server deploy
+    `agentstack-server`→container **`agentstack`**) with hostAlias (issuer + UI
+    hosts → ingress ClusterIP) + CA volume/mount + trust env. Ingress Service name
+    fixed `ingress-nginx` → **`ingress-nginx-controller`** (verified live).
+  - **Deadlock fix.** Helm ran `wait: true`, but pods can't go Ready until the
+    hostAlias/CA patch (a later task) lands → 10-min timeout then fail. Changed to
+    `wait: false`; readiness is gated afterward in `readiness_check.yml` (no bundled
+    keycloak hook in external mode, so one pass + patch + wait converges).
+  - **Honesty/schema cleanups.** Removed bogus `auth.method: oidc` (not a chart
+    key — OIDC-only is `auth.basic.enabled: false`); set `auth.nextauthUrl`/`apiUrl`
+    to the public UI URL (chart default is localhost); dropped unconfirmed
+    `externalDatabase.type`/`existingSecretPasswordKey`; `sslRootCert` is an inline
+    PEM not a path (left empty = sslmode=require); removed `changed_when: false`
+    from the mutating helm/Certificate/StatefulSet applies (first install now
+    reports `changed`, not `ok`).
+  **Validated:** `--syntax-check` passes; `helm template` with garrison's full value
+  set renders cleanly (schema accepted), confirming externalDatabase/externalOidcProvider/
+  auth/ingress keys and the rendered server env (`AUTH__OIDC__ISSUER`,
+  `PERSISTENCE__DB_URL`←sqlConnection, `AUTH__OIDC__VALIDATE_AUDIENCE=true`,
+  `AUTH__BASIC__ENABLED=false`). Reworked tree synced to `/opt`.
+  **Not yet runtime-tested (Phase 4 / next bringup):** a live `site.yml` run; the
+  Python server's CA trust may need `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE` in
+  addition to `NODE_EXTRA_CA_CERTS` (flagged in the patch); browser E2E login.
+
 

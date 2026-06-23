@@ -1,0 +1,42 @@
+---
+# AgentStack self-rolled PostgreSQL 16 StatefulSet
+# (replaces the disabled Bitnami subchart; Pattern copied from armory's keycloak role)
+
+# ── General ────────────────────────────────────────────────────────────────────────
+agentstack_db_enabled: true
+
+# ── PostgreSQL StatefulSet (single-node backing store) ──────────────────────────────
+# pgvector-enabled Postgres 16 (NOT plain postgres:16): the agentstack chart's
+# create-pgvector-extension init container runs `CREATE EXTENSION vector`, which
+# requires the pgvector extension files in the image. pgvector/pgvector:pg16 is
+# the official pgvector image built on postgres:16 — a drop-in (same entrypoint,
+# same POSTGRES_* env, same PGDATA layout).
+agentstack_pg_image: "pgvector/pgvector:pg16"
+# Service/StatefulSet name. MUST match Phase 2's TLS cert SAN + sqlConnection host
+# (agentstack-postgresql.<ns>.svc.cluster.local) and the agentstack role's
+# agentstack_db_host. This is the Bitnami-subchart-conventional name Phase 2
+# already anticipates.
+agentstack_pg_service: "agentstack-postgresql"
+agentstack_db_name: "agentstack"
+agentstack_db_username: "agentstack"
+agentstack_pg_storage_size: "10Gi"
+# Empty = use the cluster default StorageClass (k3s local-path).
+agentstack_pg_storage_class: ""
+
+# ── TLS for Postgres ─────────────────────────────────────────────────────────────────
+# When true, enable ssl=on for PostgreSQL + mount TLS cert/key from a Secret.
+agentstack_pg_tls_enabled: true
+agentstack_pg_tls_secret_name: "{{ agentstack_pg_tls_cert_secret_name }}"
+agentstack_pg_tls_init_image: "busybox:1.36"
+# cert-manager Certificate (Phase 2) creates this Secret in the agentstack ns.
+# Verified live name is agentstack-postgresql-tls (NOT -postgres-tls).
+agentstack_pg_tls_cert_secret_name: "agentstack-postgresql-tls"
+
+# ── Credentials Secret (from Phase 2: agentstack_secrets) ──────────────────────────
+# The VSO VaultStaticSecret creates this Secret with keys: username, password, postgres
+agentstack_db_secret_name: "agentstack-postgres-credentials"
+
+# ── Internal CA for connecting from the Helm release ────────────────────────────────
+# The trust-manager Bundle distributes pki-int CA into this ConfigMap.
+agentstack_pg_ca_configmap_name: "agentstack-public-ca"
+agentstack_pg_ca_cert_key: "ca.crt"
