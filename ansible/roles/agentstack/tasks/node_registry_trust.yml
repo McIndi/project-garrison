@@ -1,0 +1,40 @@
+---
+# Node-level registry trust for in-cluster agent builds (Phase 3).
+#
+# providerBuilds pushes built images to the in-cluster registry, but the node's
+# containerd does the PULL — using host DNS (not CoreDNS) and HTTPS by default, so
+# it cannot reach the plain-HTTP, ClusterIP-only registry by its Service name.
+# This reads the registry's live ClusterIP and writes a k3s registries.yaml mirror
+# (host -> ClusterIP over HTTP). The k3s restart is deferred to a handler that
+# fires ONLY when the file actually changes, so re-runs are idempotent and don't
+# blip the control plane needlessly.
+
+- name: Configure node registry trust for in-cluster builds
+  when: agentstack_node_registry_trust_enabled | bool
+  block:
+    - name: Read the local registry Service (for its ClusterIP)
+      kubernetes.core.k8s_info:
+        kind: Service
+        name: "{{ agentstack_local_registry_service_name }}"
+        namespace: "{{ agentstack_namespace }}"
+      register: _registry_svc
+      until:
+        - _registry_svc.resources | length > 0
+        - _registry_svc.resources[0].spec.clusterIP is defined
+        - _registry_svc.resources[0].spec.clusterIP not in ['', 'None']
+      retries: 12
+      delay: 5
+
+    - name: Set the registry ClusterIP fact
+      ansible.builtin.set_fact:
+        agentstack_registry_cluster_ip: "{{ _registry_svc.resources[0].spec.clusterIP }}"
+
+    - name: Write k3s registries.yaml (mirror registry host -> ClusterIP over HTTP)
+      become: true
+      ansible.builtin.template:
+        src: k3s-registries.yaml.j2
+        dest: "{{ agentstack_k3s_registries_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      notify: Restart k3s for registry mirror

@@ -1,0 +1,34 @@
+---
+# Restart k3s so containerd picks up the new registries.yaml, then wait for the
+# control plane to come back. Three tasks share one `listen` topic so a single
+# notify runs them in order. Fires only when registries.yaml changes.
+
+- name: Restart k3s to apply registries.yaml
+  become: true
+  ansible.builtin.systemd:
+    name: "{{ agentstack_k3s_service_name }}"
+    state: restarted
+  listen: "Restart k3s for registry mirror"
+
+- name: Wait for the Kubernetes API to come back
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 6443
+    state: started
+    delay: 5
+    timeout: 180
+  listen: "Restart k3s for registry mirror"
+
+- name: Wait for node(s) to report Ready
+  kubernetes.core.k8s_info:
+    kind: Node
+  register: _nodes_ready
+  until: >-
+    _nodes_ready.resources | length > 0 and
+    (_nodes_ready.resources | map(attribute='status.conditions') | flatten
+      | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True')
+      | list | length) == (_nodes_ready.resources | length)
+  retries: 24
+  delay: 5
+  listen: "Restart k3s for registry mirror"

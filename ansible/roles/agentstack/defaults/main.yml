@@ -149,6 +149,43 @@ agentstack_helm_values:
       - secretName: "{{ agentstack_ui_ingress_tls_secret_name }}"
         hosts:
           - "{{ agentstack_ui_host }}"
+  # ── In-cluster agent builds (Option C: ClusterIP local registry, insecure HTTP) ──
+  # Kaniko builds agent images from GitHub and pushes to the bundled registry.
+  # Registry is ClusterIP-only: traffic never leaves the pod network, so plain
+  # HTTP (insecure) is acceptable. registryPrefix MUST target our namespace —
+  # the chart default hardcodes `.default` which does not resolve here.
+  localDockerRegistry:
+    enabled: true
+    service:
+      type: ClusterIP          # was NodePort by default — no off-cluster exposure
+  providerBuilds:
+    enabled: true
+    buildBackend: "kaniko"
+    buildRegistry:
+      # Single source of truth (agentstack_build_registry_host) — this same value
+      # is the registries.yaml mirror key, so the chart's push target and the
+      # node's pull config can never drift. See "Node-level registry trust" below.
+      registryPrefix: "{{ agentstack_build_registry_host }}"
+      insecure: true
+
+# ── Node-level registry trust (k3s containerd) for in-cluster builds ───────────────
+# providerBuilds PUSHES built agent images to the in-cluster registry via `crane`
+# (running in-cluster, resolves the Service via CoreDNS — works). But image PULLS
+# are done by the NODE's containerd, which uses host DNS (not CoreDNS) and defaults
+# to HTTPS. It cannot resolve the cluster Service name and rejects the plain-HTTP
+# registry, so every built agent fails ImagePull with "no such host". We fix this
+# by writing /etc/rancher/k3s/registries.yaml with a mirror that maps the registry
+# host -> its ClusterIP over HTTP, then restarting k3s (node_registry_trust.yml).
+# The ClusterIP is read live each run, so re-running the playbook re-converges if
+# the Service is ever recreated. Keeps the registry ClusterIP-only (no NodePort).
+agentstack_node_registry_trust_enabled: true
+agentstack_local_registry_service_name: "agentstack-registry-svc"
+agentstack_local_registry_service_port: 5001
+# host:port shared by the chart registryPrefix (above) and the registries.yaml key.
+agentstack_build_registry_host: "{{ agentstack_local_registry_service_name }}.{{ agentstack_namespace }}:{{ agentstack_local_registry_service_port }}"
+# k3s node config (garrison runs locally on the k3s server node via localhost).
+agentstack_k3s_registries_file: "/etc/rancher/k3s/registries.yaml"
+agentstack_k3s_service_name: "k3s"
 
 # ── UI Ingress TLS ────────────────────────────────────────────────────────────────
 # cert-manager will create this Secret (Certificate resource from Phase 3)

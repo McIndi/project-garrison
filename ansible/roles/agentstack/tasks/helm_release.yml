@@ -12,6 +12,13 @@
           metadata:
             name: "{{ agentstack_namespace }}"
 
+    - name: Ensure /registry-data hostPath directory exists (for localDockerRegistry chart volume)
+      ansible.builtin.file:
+        path: /registry-data
+        state: directory
+        mode: "0755"
+      become: true
+
     - name: Read the Postgres TLS CA (ca.crt) for DB SSL verification
       kubernetes.core.k8s_info:
         kind: Secret

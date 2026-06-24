@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+# Managed by garrison ansible (roles/agentstack/node_registry_trust.yml). DO NOT EDIT BY HAND.
+#
+# Lets the k3s node's containerd PULL in-cluster-built agent images from the
+# bundled AgentStack registry. That registry serves plain HTTP and is reachable
+# only by ClusterIP — its Service DNS name does not resolve at the node level, and
+# containerd would otherwise default to HTTPS. This mirror maps the registry
+# host:port to its ClusterIP over HTTP, so no cluster DNS and no TLS are required.
+# Regenerated from the live ClusterIP on every playbook run.
+mirrors:
+  "{{ agentstack_build_registry_host }}":
+    endpoint:
+      - "http://{{ agentstack_registry_cluster_ip }}:{{ agentstack_local_registry_service_port }}"

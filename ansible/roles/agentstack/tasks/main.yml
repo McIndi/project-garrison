@@ -19,6 +19,13 @@
     - name: Include helm_release subtask
       ansible.builtin.include_tasks: helm_release.yml
 
+    # After the chart is applied the registry Service exists (ClusterIP assigned),
+    # so we can read it and configure node-level containerd pull trust. The k3s
+    # restart is deferred to a handler (flushed at play end) so it does NOT blip
+    # the API mid-deploy — the mirror is only needed at `agentstack add` time.
+    - name: Include node_registry_trust subtask (k3s containerd pull config)
+      ansible.builtin.include_tasks: node_registry_trust.yml
+
     - name: Include ui_ingress subtask
       ansible.builtin.include_tasks: ui_ingress.yml
 
