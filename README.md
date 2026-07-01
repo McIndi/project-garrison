@@ -111,8 +111,7 @@ After a successful bringup, the Agent Stack admin user is created in the
 
 ```bash
 # Username
-sudo k3s kubectl get secret agentstack-admin-credentials -n agentstack \
-  -o jsonpath='{.data.username}' | base64 -d; echo
+sudo k3s kubectl get secret agentstack-admin-credentials -n agentstack -o jsonpath='{.data.username}' | base64 -d; echo
 
 # Password
 sudo k3s kubectl get secret agentstack-admin-credentials -n agentstack \
@@ -181,8 +180,7 @@ host:
 
 ```bash
 # DNS: map the api ingress host to the k3s node loopback (klipper-lb binds here)
-grep -q "agentstack-api.armory.local" /etc/hosts \
-  || echo "127.0.0.1 agentstack-api.armory.local" | sudo tee -a /etc/hosts
+grep -q "api.agentstack.armory.local" /etc/hosts || echo "127.0.0.1 api.agentstack.armory.local" | sudo tee -a /etc/hosts
 
 # SSL: expose the garrison-installed CA (under /etc/pki/ca-trust/…) to Python
 export SSL_CERT_FILE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
@@ -205,9 +203,9 @@ export SSL_CERT_FILE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
 export REQUESTS_CA_BUNDLE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
 
 # Confirm discovery works (must return JSON, not HTML)
-curl -s https://agentstack-api.armory.local/.well-known/oauth-protected-resource/ | python3 -m json.tool
+curl -s https://api.agentstack.armory.local/.well-known/oauth-protected-resource/ | python3 -m json.tool
 
-agentstack server login https://agentstack-api.armory.local --client-id agentstack-cli
+agentstack server login https://api.agentstack.armory.local --client-id agentstack-cli
 ```
 
 ### Deploying reference agents
