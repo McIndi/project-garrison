@@ -8,6 +8,11 @@
   environment:
     K8S_AUTH_KUBECONFIG: "{{ lookup('ansible.builtin.env', 'ARMORY_KUBECONFIG_PATH') | default('/etc/rancher/k3s/k3s.yaml', true) }}"
   roles:
+    - role: host_dependencies
+      tags:
+        - host_dependencies
+        - host_prereqs
+
     - role: preflight
       tags:
         - always

@@ -1,0 +1,13 @@
+---
+# Host packages required for garrison workflows and module runtime dependencies.
+garrison_host_dependency_packages:
+  - ansible-lint
+  - yamllint
+  - python3-pip
+  - curl
+  - git
+  - python3-kubernetes
+
+# Keep present by default; override to latest if host drift correction is needed.
+garrison_host_dependency_state: present
+garrison_host_dependency_update_cache: true
