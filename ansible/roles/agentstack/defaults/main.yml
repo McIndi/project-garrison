@@ -113,7 +113,7 @@ agentstack_helm_values:
       enabled: false
     # Public URLs (chart default is localhost — must point at the real ingress host)
     nextauthUrl: "https://{{ agentstack_ui_host }}"
-    apiUrl: "https://{{ agentstack_ui_host }}"
+    apiUrl: "https://{{ agentstack_api_host }}"
   # Trust proxy headers (X-Forwarded-* from nginx-ingress) — top-level key
   trustProxyHeaders: true
   # Health-probe timeouts. The chart's livenessProbe/readinessProbe set
@@ -191,6 +191,10 @@ agentstack_k3s_service_name: "k3s"
 # cert-manager will create this Secret (Certificate resource from Phase 3)
 agentstack_ui_ingress_tls_secret_name: "agentstack-ui-tls"
 agentstack_ui_ingress_cert_issuer: "openbao-pki-external"
+agentstack_ui_service_name: "agentstack-ui-svc"
+# Chart service.port (helm values.yaml ui.service.port: 8334).
+agentstack_ui_service_port: 8334
+agentstack_ui_route_path: "/"
 # nginx proxy buffer sizing for the large post-login NextAuth Set-Cookie header.
 agentstack_ingress_proxy_buffer_size: "64k"
 agentstack_ingress_proxy_buffers_number: "8"
@@ -209,24 +213,30 @@ agentstack_api_host: "api.{{ agentstack_ui_host }}"
 agentstack_server_service_name: "agentstack-server-svc"
 # Chart service.port (helm values.yaml service.port: 8333).
 agentstack_server_service_port: 8333
+agentstack_api_route_path: "/"
 agentstack_api_ingress_tls_secret_name: "agentstack-api-tls"
 agentstack_api_ingress_cert_issuer: "{{ agentstack_ui_ingress_cert_issuer }}"
+
+# Envoy Gateway parent for AgentStack HTTPRoutes.
+agentstack_route_gateway_name: "armory"
+agentstack_route_gateway_namespace: "envoy-gateway-system"
 
 # ── Dual-issuer patch: hostAlias + private-CA trust (armory's proven pattern) ──────
 # In external-OIDC mode the UI + server pods must reach the PUBLIC issuer
 # (https://armory.local/realms/agentstack) which only resolves at the ingress and
 # is served with a private-CA (Armory Root CA) cert. Two things are required on
 # both Deployments, neither of which the chart does itself:
-#   1. a hostAlias mapping the public host(s) → the nginx-ingress ClusterIP, and
+#   1. a hostAlias mapping the public host(s) → the Envoy Gateway ClusterIP, and
 #   2. the public CA mounted in-pod + NODE_EXTRA_CA_CERTS so TLS verify passes.
-# Discovered from the ingress-nginx Service; CA comes from the Phase 2 trust bundle.
-agentstack_hostaliases_ingress_service_name: "ingress-nginx-controller"
-agentstack_hostaliases_ingress_namespace: "ingress-nginx"
+# Discovered by Envoy Gateway owning-gateway labels; CA comes from Phase 2 trust bundle.
+agentstack_hostaliases_edge_gateway_namespace: "envoy-gateway-system"
+agentstack_hostaliases_edge_gateway_name: "armory"
 
 # Public hostnames the pods must resolve to the ingress (issuer host + UI host).
 agentstack_hostaliases_hostnames:
   - "{{ agentstack_armory_domain }}"
   - "{{ agentstack_ui_host }}"
+  - "{{ agentstack_api_host }}"
 
 # Container names INSIDE each Deployment (chart-fixed; verified against armory):
 #   UI Deployment    agentstack-ui  → container "agentstack-ui"

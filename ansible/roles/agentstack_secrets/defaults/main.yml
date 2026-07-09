@@ -103,13 +103,17 @@ agentstack_trust_openbao_ca_target_key: ca.crt
 
 # Bundle 2 — Public/external CA (CN=Armory Root CA). What agentstack PODS need to
 #   validate the public OIDC issuer (https://<armory-host>/realms/agentstack,
-#   served by nginx-ingress armory-tls, issued by openbao-pki-external → chains to
-#   Armory Root CA). Sourced from openbao-ui-tls ca.crt in the openbao ns (carries
-#   the Armory Root CA and lives in the trust namespace). For Phase 3 pod use.
+#   served by the Envoy edge armory-tls cert, issued by openbao-pki-external →
+#   chains to Armory Root CA). trust-manager reads sources only from its trust
+#   namespace (openbao), so garrison mirrors ca.crt from the edge TLS secret into
+#   this source secret name when missing.
 agentstack_trust_public_ca_bundle_name: agentstack-public-ca
 agentstack_trust_public_ca_source_secret_name: openbao-ui-tls
 agentstack_trust_public_ca_source_key: ca.crt
 agentstack_trust_public_ca_target_key: ca.crt
+agentstack_trust_namespace: openbao
+agentstack_trust_public_ca_fallback_secret_name: armory-tls
+agentstack_trust_public_ca_fallback_secret_namespace: envoy-gateway-system
 
 # VaultConnection caCertSecretRef: the in-namespace Secret created by the OpenBao
 # CA Bundle above (trust-manager names the target Secret after the Bundle).

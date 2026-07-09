@@ -1,5 +1,6 @@
 ---
-# Create the server (API) ingress + TLS certificate for the agentstack CLI.
+# Create the server (API) edge TLS certificate + Gateway API route for the
+# agentstack CLI.
 #
 # The chart's own ingress (helm/templates/ingress.yaml) hardcodes the backend to
 # agentstack-ui-svc for every path, so it cannot expose the server. We create a
@@ -43,36 +44,33 @@
       delay: 5
       changed_when: false
 
-    - name: Create server (API) Ingress routing to agentstack-server-svc
+    - name: Create server (API) HTTPRoute routing to agentstack-server-svc
       kubernetes.core.k8s:
         state: present
         definition:
-          apiVersion: networking.k8s.io/v1
-          kind: Ingress
+          apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
           metadata:
             name: "{{ agentstack_release_name }}-api"
             namespace: "{{ agentstack_namespace }}"
           spec:
-            ingressClassName: nginx
-            tls:
-              - secretName: "{{ agentstack_api_ingress_tls_secret_name }}"
-                hosts:
-                  - "{{ agentstack_api_host }}"
+            parentRefs:
+              - name: "{{ agentstack_route_gateway_name }}"
+                namespace: "{{ agentstack_route_gateway_namespace }}"
+            hostnames:
+              - "{{ agentstack_api_host }}"
             rules:
-              - host: "{{ agentstack_api_host }}"
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: "{{ agentstack_server_service_name }}"
-                          port:
-                            number: "{{ agentstack_server_service_port | int }}"
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: "{{ agentstack_api_route_path }}"
+                backendRefs:
+                  - name: "{{ agentstack_server_service_name }}"
+                    port: "{{ agentstack_server_service_port | int }}"
 
     - name: Log server (API) ingress deployment
       ansible.builtin.debug:
         msg: >-
-          AgentStack server (API) ingress deployed for {{ agentstack_api_host }}
+          AgentStack server (API) HTTPRoute deployed for {{ agentstack_api_host }}
           → {{ agentstack_server_service_name }}:{{ agentstack_server_service_port }}
           (used by the agentstack CLI)

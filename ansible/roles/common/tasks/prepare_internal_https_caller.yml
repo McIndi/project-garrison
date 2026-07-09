@@ -11,6 +11,62 @@
 #
 # Sets fact: internal_ca_bundle_path (path to combined CA file on disk)
 
+- name: Derive Keycloak service host from keycloak_addr
+  ansible.builtin.set_fact:
+    _internal_https_keycloak_host: "{{ keycloak_addr | regex_replace('^https?://([^/:]+).*$', '\\1') }}"
+  changed_when: false
+
+- name: Derive OpenBao service host from openbao_addr
+  ansible.builtin.set_fact:
+    _internal_https_openbao_host: "{{ openbao_addr | regex_replace('^https?://([^/:]+).*$', '\\1') }}"
+  changed_when: false
+
+- name: Look up Keycloak Service when using in-cluster service DNS
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Service
+    name: "{{ _internal_https_keycloak_host | regex_replace('^([^.]+)\\..*$', '\\1') }}"
+    namespace: "{{ _internal_https_keycloak_host | regex_replace('^[^.]+\\.([^.]+)\\..*$', '\\1') }}"
+    kubeconfig: "{{ garrison_kubeconfig_path }}"
+  register: _internal_https_keycloak_svc
+  changed_when: false
+  when: _internal_https_keycloak_host is match('^[^.]+\\.[^.]+\\.svc(\\.cluster\\.local)?$')
+
+- name: Pin Keycloak service DNS to ClusterIP in /etc/hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^\\S+\\s+{{ _internal_https_keycloak_host | regex_escape }}(\\s|$)'
+    line: "{{ _internal_https_keycloak_svc.resources[0].spec.clusterIP }} {{ _internal_https_keycloak_host }}"
+    state: present
+  become: true
+  when:
+    - _internal_https_keycloak_host is match('^[^.]+\\.[^.]+\\.svc(\\.cluster\\.local)?$')
+    - (_internal_https_keycloak_svc.resources | default([]) | length) > 0
+    - (_internal_https_keycloak_svc.resources[0].spec.clusterIP | default('')) not in ['', 'None']
+
+- name: Look up OpenBao Service when using in-cluster service DNS
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Service
+    name: "{{ _internal_https_openbao_host | regex_replace('^([^.]+)\\..*$', '\\1') }}"
+    namespace: "{{ _internal_https_openbao_host | regex_replace('^[^.]+\\.([^.]+)\\..*$', '\\1') }}"
+    kubeconfig: "{{ garrison_kubeconfig_path }}"
+  register: _internal_https_openbao_svc
+  changed_when: false
+  when: _internal_https_openbao_host is match('^[^.]+\\.[^.]+\\.svc(\\.cluster\\.local)?$')
+
+- name: Pin OpenBao service DNS to ClusterIP in /etc/hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^\\S+\\s+{{ _internal_https_openbao_host | regex_escape }}(\\s|$)'
+    line: "{{ _internal_https_openbao_svc.resources[0].spec.clusterIP }} {{ _internal_https_openbao_host }}"
+    state: present
+  become: true
+  when:
+    - _internal_https_openbao_host is match('^[^.]+\\.[^.]+\\.svc(\\.cluster\\.local)?$')
+    - (_internal_https_openbao_svc.resources | default([]) | length) > 0
+    - (_internal_https_openbao_svc.resources[0].spec.clusterIP | default('')) not in ['', 'None']
+
 - name: Fetch OpenBao listener CA from Kubernetes secret
   kubernetes.core.k8s_info:
     kind: Secret

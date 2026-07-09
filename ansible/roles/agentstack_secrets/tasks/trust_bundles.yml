@@ -42,6 +42,50 @@
 
 # ── Public/external CA Bundle (for Phase 3 pod OIDC validation) ───────────────
 
+- name: Check public CA source secret in trust namespace
+  kubernetes.core.k8s_info:
+    kind: Secret
+    name: "{{ agentstack_trust_public_ca_source_secret_name }}"
+    namespace: "{{ agentstack_trust_namespace }}"
+  register: _public_ca_source_in_trust_ns
+  changed_when: false
+  failed_when: false
+
+- name: Read edge TLS secret for public CA fallback
+  kubernetes.core.k8s_info:
+    kind: Secret
+    name: "{{ agentstack_trust_public_ca_fallback_secret_name }}"
+    namespace: "{{ agentstack_trust_public_ca_fallback_secret_namespace }}"
+  register: _public_ca_fallback_secret
+  changed_when: false
+  when: (_public_ca_source_in_trust_ns.resources | default([]) | length) == 0
+
+- name: Assert fallback edge TLS secret includes CA data
+  ansible.builtin.assert:
+    that:
+      - (_public_ca_fallback_secret.resources | default([]) | length) > 0
+      - _public_ca_fallback_secret.resources[0].data is defined
+      - agentstack_trust_public_ca_source_key in _public_ca_fallback_secret.resources[0].data
+    fail_msg: |
+      Public CA source secret {{ agentstack_trust_public_ca_source_secret_name }} is
+      missing in trust namespace {{ agentstack_trust_namespace }}, and fallback
+      {{ agentstack_trust_public_ca_fallback_secret_namespace }}/{{ agentstack_trust_public_ca_fallback_secret_name }}
+      does not provide key {{ agentstack_trust_public_ca_source_key }}.
+  when: (_public_ca_source_in_trust_ns.resources | default([]) | length) == 0
+
+- name: Mirror public CA source secret into trust namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      type: Opaque
+      metadata:
+        name: "{{ agentstack_trust_public_ca_source_secret_name }}"
+        namespace: "{{ agentstack_trust_namespace }}"
+      data: "{{ { (agentstack_trust_public_ca_source_key): (_public_ca_fallback_secret.resources[0].data[agentstack_trust_public_ca_source_key]) } }}"
+  when: (_public_ca_source_in_trust_ns.resources | default([]) | length) == 0
+
 - name: "Apply trust-manager Bundle for the public/external CA"
   kubernetes.core.k8s:
     definition: "{{ lookup('template', 'bundle_pki_ext.yaml.j2') | from_yaml }}"

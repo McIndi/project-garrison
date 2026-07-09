@@ -1,8 +1,39 @@
 ---
-# Create the UI ingress TLS certificate and ingress resource
+# Create the UI edge TLS certificate and Gateway API route resource.
 
 - name: Deploy UI ingress TLS and ingress resource
   block:
+    - name: Resolve edge gateway IP from armory.local host entry
+      ansible.builtin.shell:
+        cmd: >-
+          getent ahostsv4 {{ agentstack_armory_domain }} | awk 'NR==1 { print $1; exit }'
+      register: _agentstack_edge_gateway_ip
+      changed_when: false
+
+    - name: Assert edge gateway IP was resolved
+      ansible.builtin.assert:
+        that:
+          - _agentstack_edge_gateway_ip.stdout | trim | length > 0
+        fail_msg: >-
+          Could not resolve {{ agentstack_armory_domain }} to an IPv4 address,
+          so agentstack host aliases could not be written.
+
+    - name: Pin AgentStack UI host in /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^\\S+\\s+{{ agentstack_ui_host | regex_escape }}(\\s|$)'
+        line: "{{ _agentstack_edge_gateway_ip.stdout | trim }} {{ agentstack_ui_host }}"
+        state: present
+      become: true
+
+    - name: Pin AgentStack API host in /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^\\S+\\s+{{ agentstack_api_host | regex_escape }}(\\s|$)'
+        line: "{{ _agentstack_edge_gateway_ip.stdout | trim }} {{ agentstack_api_host }}"
+        state: present
+      become: true
+
     - name: Create cert-manager Certificate for UI ingress (pki-external)
       kubernetes.core.k8s:
         state: present
@@ -39,3 +70,33 @@
     - name: Log UI ingress deployment
       ansible.builtin.debug:
         msg: "AgentStack UI ingress TLS certificate issued for {{ agentstack_ui_host }}"
+
+    - name: Create UI HTTPRoute routing to agentstack UI service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: "{{ agentstack_release_name }}-ui"
+            namespace: "{{ agentstack_namespace }}"
+          spec:
+            parentRefs:
+              - name: "{{ agentstack_route_gateway_name }}"
+                namespace: "{{ agentstack_route_gateway_namespace }}"
+            hostnames:
+              - "{{ agentstack_ui_host }}"
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: "{{ agentstack_ui_route_path }}"
+                backendRefs:
+                  - name: "{{ agentstack_ui_service_name }}"
+                    port: "{{ agentstack_ui_service_port | int }}"
+
+    - name: Log UI HTTPRoute deployment
+      ansible.builtin.debug:
+        msg: >-
+          AgentStack UI HTTPRoute deployed for {{ agentstack_ui_host }}
+          → {{ agentstack_ui_service_name }}:{{ agentstack_ui_service_port }}

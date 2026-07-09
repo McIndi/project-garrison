@@ -13,12 +13,12 @@ agentstack_ui_host: "{{ lookup('ansible.builtin.env', 'AGENTSTACK_UI_HOST') | de
 preflight_expected_services:
   - { namespace: keycloak, name: keycloak-service }
   - { namespace: openbao, name: openbao }
-  - { namespace: ingress-nginx, name: ingress-nginx-controller }
 
 preflight_expected_deployments:
   - { namespace: vault-secrets-operator-system, name: vault-secrets-operator-controller-manager }
   - { namespace: cert-manager, name: cert-manager }
   - { namespace: cert-manager, name: trust-manager }
+  - { namespace: envoy-gateway-system, name: envoy-gateway }
 
 preflight_fail_message: >-
   Armory platform dependencies are not fully ready. Run armory ansible/playbooks/site.yml first,

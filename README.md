@@ -213,13 +213,15 @@ agentstack server login https://api.agentstack.armory.local --client-id agentsta
 After login, deploy any agent with a `Dockerfile` at the repo root:
 
 ```bash
-agentstack add https://github.com/i-am-bee/agentstack#path=/agents/<agent-name>
+agentstack add https://github.com/jenna-winkler/agentstack-showcase
 # or with a pinned ref:
 agentstack add https://github.com/i-am-bee/agentstack@v0.7.1#path=/agents/<agent-name>
 
 agentstack list          # confirm registered
 agentstack run <agent>   # test via CLI
 ```
+
+
 
 See [agentstack reference agents](https://github.com/i-am-bee/agentstack#reference-agents)
 for the list of targets.

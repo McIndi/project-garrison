@@ -3,7 +3,7 @@
 #
 # In external-OIDC mode the pods talk to the PUBLIC issuer
 # (https://{{ agentstack_armory_domain }}/realms/agentstack), which:
-#   1. only resolves at the nginx ingress (not via cluster DNS), and
+#   1. only resolves at the edge gateway (not via cluster DNS), and
 #   2. is served with an Armory-Root-CA (private) certificate.
 # The chart provisions neither the name resolution nor the CA trust, so we patch
 # both Deployments with (a) a hostAlias → ingress ClusterIP and (b) the Phase 2
@@ -16,29 +16,34 @@
 
 - name: Apply dual-issuer (hostAlias + CA trust) patch to AgentStack Deployments
   block:
-    - name: Get ingress-nginx controller Service ClusterIP
+    - name: Look up Envoy Gateway data-plane Service ClusterIP
       kubernetes.core.k8s_info:
+        api_version: v1
         kind: Service
-        name: "{{ agentstack_hostaliases_ingress_service_name }}"
-        namespace: "{{ agentstack_hostaliases_ingress_namespace }}"
-      register: _ingress_service
+        namespace: "{{ agentstack_hostaliases_edge_gateway_namespace }}"
+        label_selectors:
+          - "gateway.envoyproxy.io/owning-gateway-name={{ agentstack_hostaliases_edge_gateway_name }}"
+          - "gateway.envoyproxy.io/owning-gateway-namespace={{ agentstack_hostaliases_edge_gateway_namespace }}"
+      register: _edge_gateway_service
       changed_when: false
+      failed_when: false
 
-    - name: Assert ingress ClusterIP was discovered
+    - name: Select edge gateway ClusterIP
+      ansible.builtin.set_fact:
+        _ingress_cluster_ip: >-
+          {{
+            ((_edge_gateway_service.resources | default([]) | first | default({})).spec.clusterIP | default(''))
+          }}
+
+    - name: Assert edge gateway ClusterIP was discovered
       ansible.builtin.assert:
         that:
-          - _ingress_service.resources | length > 0
-          - _ingress_service.resources[0].spec.clusterIP is defined
-          - _ingress_service.resources[0].spec.clusterIP not in ['', 'None']
+          - (_ingress_cluster_ip | default('') | length) > 0
         fail_msg: >-
-          Could not resolve the ingress ClusterIP from Service
-          {{ agentstack_hostaliases_ingress_service_name }} in
-          {{ agentstack_hostaliases_ingress_namespace }}. The dual-issuer
-          hostAlias cannot be built without it.
-
-    - name: Set ingress ClusterIP fact
-      ansible.builtin.set_fact:
-        _ingress_cluster_ip: "{{ _ingress_service.resources[0].spec.clusterIP }}"
+          Could not resolve edge gateway ClusterIP by labels
+          gateway.envoyproxy.io/owning-gateway-name={{ agentstack_hostaliases_edge_gateway_name }},
+          gateway.envoyproxy.io/owning-gateway-namespace={{ agentstack_hostaliases_edge_gateway_namespace }}.
+          The dual-issuer hostAlias cannot be built without it.
 
     # The patch body is identical bar the container name, so build it once per
     # Deployment via a loop over (deployment, container) pairs.
