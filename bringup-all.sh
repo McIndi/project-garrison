@@ -190,9 +190,11 @@ for target in "${TARGETS[@]}"; do
   if [[ "$target" == "armory" ]]; then
     ansible_root="$ARMORY_PROJECT_ROOT/ansible"
     env_file="$ARMORY_PROJECT_ROOT/.env"
+    pre_source_env_file="$SCRIPT_DIR/.env"
   else
     ansible_root="$GARRISON_ANSIBLE_ROOT"
     env_file="$SCRIPT_DIR/.env"
+    pre_source_env_file="$SCRIPT_DIR/.env"
   fi
 
   if [[ ! -f "$ansible_root/playbooks/site.yml" ]]; then
@@ -205,7 +207,9 @@ for target in "${TARGETS[@]}"; do
     exit 1
   fi
 
-  cmd="cd '$ansible_root' && set -a; source '$env_file'; set +a && ansible-playbook playbooks/site.yml"
+  # Re-source garrison before the garrison deploy so the outer loop keeps the
+  # garrison-specific overrides in scope after armory has run.
+  cmd="cd '$ansible_root' && set -a; source '$pre_source_env_file'; source '$env_file'; set +a && ansible-playbook playbooks/site.yml"
 
   if [[ "$DRY_RUN" == "true" ]]; then
     echo "  $ $cmd"
